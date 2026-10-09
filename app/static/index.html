@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auralyt — Brand & Website Profiler (Engine 1)</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="logo-area">
+      <div class="logo-badge">ENGINE 1</div>
+      <div>
+        <div class="logo-title">Auralyt Profiler</div>
+        <div class="logo-subtitle">Website Ground-Truth Intelligence</div>
+      </div>
+    </div>
+    <nav class="nav-links">
+      <button class="nav-btn active" onclick="switchTab('onboard')">Start Profiling</button>
+      <button class="nav-btn" id="nav-progress" onclick="switchTab('progress')">Crawl Progress</button>
+      <button class="nav-btn" id="nav-profile" onclick="switchTab('profile')">Brand Profile</button>
+      <button class="nav-btn" id="nav-facts" onclick="switchTab('facts')">Fact Verification</button>
+      <button class="nav-btn" id="nav-pages" onclick="switchTab('pages')">Crawled Pages</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- TAB 1: Onboard / Start Profiling -->
+    <section id="tab-onboard" class="tab-content">
+      <div class="card">
+        <h2 class="card-title">🔍 Onboard & Profile Brand Website</h2>
+        <p class="card-desc">
+          Engine 1 discovers accessible pages, parses sitemaps and metadata, extracts products, use cases, target audience, and pricing, and creates a verifiable ground-truth profile.
+        </p>
+
+        <div class="banner banner-warning" style="margin-bottom: 1.5rem;">
+          <strong>Security & Policy Notice:</strong> All requests enforce strict SSRF protection, DNS validation, and robots.txt compliance. Private and loopback IP spaces are prohibited.
+        </div>
+
+        <form id="onboard-form" onsubmit="handleOnboard(event)">
+          <div class="form-grid">
+            <div class="form-group full-width">
+              <label for="website_url">Website URL *</label>
+              <input type="url" id="website_url" placeholder="https://example.com" required>
+            </div>
+            <div class="form-group">
+              <label for="business_name">Business Name (Optional)</label>
+              <input type="text" id="business_name" placeholder="e.g. Acme Corp">
+            </div>
+            <div class="form-group">
+              <label for="industry">Industry / Category (Optional)</label>
+              <input type="text" id="industry" placeholder="e.g. Developer Tools, B2B SaaS">
+            </div>
+            <div class="form-group">
+              <label for="target_market">Target Market / Region (Optional)</label>
+              <input type="text" id="target_market" placeholder="e.g. Global, US, India">
+            </div>
+            <div class="form-group">
+              <label for="language">Primary Language (Optional)</label>
+              <input type="text" id="language" placeholder="en">
+            </div>
+            <div class="form-group">
+              <label for="page_limit">Crawl Page Limit (Default 30, Max 50)</label>
+              <input type="number" id="page_limit" min="1" max="50" value="30">
+            </div>
+          </div>
+
+          <div id="onboard-error" class="banner banner-danger" style="display: none;"></div>
+
+          <button type="submit" class="btn btn-primary" id="start-btn">
+            🚀 Start Website Profiling
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- TAB 2: Crawl Progress -->
+    <section id="tab-progress" class="tab-content" style="display: none;">
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h2 class="card-title">⚡ Profiling Run Status</h2>
+          <span id="run-status-badge" class="badge badge-pending">PENDING</span>
+        </div>
+        <p class="card-desc" id="run-info-text">Monitoring live Scrapling crawl progress...</p>
+
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-value" id="stat-discovered">0</div>
+            <div class="stat-label">Discovered</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-attempted">0</div>
+            <div class="stat-label">Attempted</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" style="color: var(--accent-success);" id="stat-succeeded">0</div>
+            <div class="stat-label">Succeeded</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" style="color: var(--accent-warning);" id="stat-skipped">0</div>
+            <div class="stat-label">Skipped (Robots/Canonical)</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" style="color: var(--accent-danger);" id="stat-failed">0</div>
+            <div class="stat-label">Failed</div>
+          </div>
+        </div>
+
+        <div id="warnings-section" style="display: none;">
+          <h3 style="font-size: 1rem; margin-bottom: 0.5rem; color: var(--accent-warning);">⚠️ Crawler Warnings & Notices</h3>
+          <ul id="warnings-list" style="padding-left: 1.5rem; color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.5rem;"></ul>
+        </div>
+
+        <div style="display: flex; gap: 1rem;">
+          <button class="btn btn-primary" id="view-profile-btn" onclick="switchTab('profile')" style="display: none;">
+            View Generated Brand Profile →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: Brand Profile Dashboard -->
+    <section id="tab-profile" class="tab-content" style="display: none;">
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <div>
+            <h2 class="card-title" id="profile-brand-name">Brand Overview</h2>
+            <div style="font-size: 0.85rem; color: var(--text-muted);" id="profile-domain">domain.com</div>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary btn-sm" onclick="triggerRefresh()">🔄 Refresh Crawl</button>
+            <button class="btn btn-success btn-sm" onclick="switchTab('facts')">✓ Verify Facts</button>
+          </div>
+        </div>
+
+        <div class="stats-grid" style="margin-bottom: 1.5rem;">
+          <div class="stat-box">
+            <div class="stat-value" id="profile-stat-facts">0</div>
+            <div class="stat-label">Total Facts Extracted</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="profile-stat-verified" style="color: var(--accent-success);">0</div>
+            <div class="stat-label">User Confirmed Facts</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="profile-stat-pages">0</div>
+            <div class="stat-label">Pages Crawled</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="profile-version-badge">v1</div>
+            <div class="stat-label">Profile Version</div>
+          </div>
+        </div>
+
+        <!-- Business Overview -->
+        <div style="background: #131c2e; padding: 1.25rem; border-radius: 8px; margin-bottom: 1.5rem; border: 1px solid var(--border-color);">
+          <h3 style="font-size: 1rem; margin-bottom: 0.5rem;">🏢 Company Description & Mission</h3>
+          <p id="overview-desc" style="color: var(--text-secondary); font-size: 0.95rem;">No description extracted yet.</p>
+          <div style="margin-top: 0.75rem; display: flex; gap: 1.5rem; font-size: 0.85rem; color: var(--text-muted);">
+            <div>Industry: <strong id="overview-industry" style="color: var(--text-primary);">-</strong></div>
+            <div>Target Market: <strong id="overview-market" style="color: var(--text-primary);">-</strong></div>
+          </div>
+        </div>
+
+        <!-- Products and Services -->
+        <div class="card" style="padding: 1.25rem; background: #131c2e;">
+          <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">📦 Products & Services</h3>
+          <div id="products-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+        </div>
+
+        <!-- Target Audience & Use Cases Grid -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+          <div class="card" style="padding: 1.25rem; background: #131c2e; margin: 0;">
+            <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">🎯 Target Audience</h3>
+            <ul id="audience-list" style="padding-left: 1.25rem; color: var(--text-secondary); font-size: 0.9rem;"></ul>
+          </div>
+          <div class="card" style="padding: 1.25rem; background: #131c2e; margin: 0;">
+            <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">💡 Use Cases</h3>
+            <ul id="usecases-list" style="padding-left: 1.25rem; color: var(--text-secondary); font-size: 0.9rem;"></ul>
+          </div>
+        </div>
+
+        <!-- Pricing Information -->
+        <div class="card" style="padding: 1.25rem; background: #131c2e;">
+          <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">💳 Public Pricing & Plans</h3>
+          <div id="pricing-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+        </div>
+
+        <!-- FAQs -->
+        <div class="card" style="padding: 1.25rem; background: #131c2e;">
+          <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">❓ Frequently Asked Questions (Structured & On-page)</h3>
+          <div id="faqs-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+        </div>
+
+        <!-- Contact and Languages -->
+        <div class="card" style="padding: 1.25rem; background: #131c2e; margin-bottom: 0;">
+          <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">🌐 Contact & Supported Languages</h3>
+          <div id="contact-info-content" style="color: var(--text-secondary); font-size: 0.9rem;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: Human Fact Verification & Review -->
+    <section id="tab-facts" class="tab-content" style="display: none;">
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <div>
+            <h2 class="card-title">🛡️ Human Fact Verification & Provenance Review</h2>
+            <p class="card-desc">Inspect supporting evidence, confirm facts, edit values, or manually add missing facts. Confirmed facts are permanently preserved across future crawl refreshes.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openAddFactModal()">+ Add Fact Manually</button>
+        </div>
+
+        <div style="display: flex; gap: 1rem; margin-bottom: 1.25rem;">
+          <select id="fact-filter-type" onchange="renderFactsList()" style="width: 200px;">
+            <option value="">All Fact Types</option>
+            <option value="business_name">Business Name</option>
+            <option value="company_description">Description</option>
+            <option value="product_service">Product / Service</option>
+            <option value="product_feature">Product Feature</option>
+            <option value="target_audience">Target Audience</option>
+            <option value="use_case">Use Case</option>
+            <option value="pricing">Pricing</option>
+            <option value="faq">FAQ</option>
+            <option value="contact_info">Contact Info</option>
+          </select>
+          <select id="fact-filter-status" onchange="renderFactsList()" style="width: 200px;">
+            <option value="">All Verification States</option>
+            <option value="confirmed">User Confirmed Only</option>
+            <option value="unconfirmed">Unconfirmed / Proposed Only</option>
+          </select>
+        </div>
+
+        <div class="facts-list" id="facts-container"></div>
+      </div>
+    </section>
+
+    <!-- TAB 5: Crawled Pages Explorer -->
+    <section id="tab-pages" class="tab-content" style="display: none;">
+      <div class="card">
+        <h2 class="card-title">📄 Crawled Pages Explorer</h2>
+        <p class="card-desc">Audit each page fetched during the profiling run, inspect HTTP status codes, detected page classifications, and extracted text.</p>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>URL</th>
+                <th>Page Type</th>
+                <th>Title</th>
+                <th>JS Used</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="pages-table-body">
+              <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No pages loaded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem;">
+          <div id="pages-pagination-info" style="font-size: 0.85rem; color: var(--text-muted);">Showing page 1</div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary btn-sm" id="prev-page-btn" onclick="changePagesPage(-1)">Previous</button>
+            <button class="btn btn-secondary btn-sm" id="next-page-btn" onclick="changePagesPage(1)">Next</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Evidence Inspector Modal -->
+  <div class="modal-overlay" id="evidence-modal">
+    <div class="modal-content">
+      <button class="close-btn" onclick="closeModal('evidence-modal')">&times;</button>
+      <h3 style="font-size: 1.15rem; margin-bottom: 0.5rem;" id="evidence-title">Provenance & Evidence Inspector</h3>
+      <div style="margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted);">SOURCE URL</div>
+        <a id="evidence-url" href="#" target="_blank" style="color: var(--accent-primary); word-break: break-all;"></a>
+      </div>
+      <div style="margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted);">EXTRACTION METHOD & CONFIDENCE</div>
+        <div id="evidence-method" style="font-weight: 600; color: var(--text-primary);"></div>
+      </div>
+      <div style="margin-bottom: 1.5rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">SUPPORTING EVIDENCE SNIPPET</div>
+        <pre id="evidence-snippet" style="background: #0f172a; padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); font-size: 0.85rem; white-space: pre-wrap; color: #cbd5e1;"></pre>
+      </div>
+      <button class="btn btn-secondary" onclick="closeModal('evidence-modal')">Close</button>
+    </div>
+  </div>
+
+  <!-- Add Fact Modal -->
+  <div class="modal-overlay" id="add-fact-modal">
+    <div class="modal-content">
+      <button class="close-btn" onclick="closeModal('add-fact-modal')">&times;</button>
+      <h3 style="font-size: 1.15rem; margin-bottom: 1rem;">Add Ground-Truth Fact</h3>
+      <form onsubmit="handleCreateFact(event)">
+        <div class="form-group" style="margin-bottom: 1rem;">
+          <label>Fact Type</label>
+          <select id="new-fact-type" required>
+            <option value="product_service">Product / Service</option>
+            <option value="product_feature">Product Feature</option>
+            <option value="target_audience">Target Audience</option>
+            <option value="use_case">Use Case</option>
+            <option value="pricing">Pricing Information</option>
+            <option value="differentiator">Key Differentiator</option>
+            <option value="faq">FAQ</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom: 1rem;">
+          <label>Fact Value / Description</label>
+          <textarea id="new-fact-val" rows="3" required placeholder="Enter factual statement..."></textarea>
+        </div>
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+          <label>Source Evidence / Note</label>
+          <input type="text" id="new-fact-snippet" placeholder="e.g. Confirmed by product documentation">
+        </div>
+        <button type="submit" class="btn btn-primary">Save Confirmed Fact</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Page Details Modal -->
+  <div class="modal-overlay" id="page-detail-modal">
+    <div class="modal-content" style="max-width: 800px;">
+      <button class="close-btn" onclick="closeModal('page-detail-modal')">&times;</button>
+      <h3 style="font-size: 1.15rem; margin-bottom: 0.5rem;" id="page-detail-title">Crawled Page Details</h3>
+      <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;" id="page-detail-url"></div>
+      <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+        <span class="badge" id="page-detail-status">HTTP 200</span>
+        <span class="badge" id="page-detail-type" style="background: #334155; color: #fff;">HOMEPAGE</span>
+      </div>
+      <div style="margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted);">META DESCRIPTION</div>
+        <p id="page-detail-desc" style="font-size: 0.9rem; color: var(--text-secondary);"></p>
+      </div>
+      <div style="margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted);">HEADINGS (H1 / H2)</div>
+        <div id="page-detail-headings" style="font-size: 0.85rem; color: var(--text-secondary);"></div>
+      </div>
+      <div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">EXTRACTED READABLE TEXT</div>
+        <pre id="page-detail-text" style="background: #0f172a; padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); font-size: 0.8rem; max-height: 300px; overflow-y: auto; white-space: pre-wrap;"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

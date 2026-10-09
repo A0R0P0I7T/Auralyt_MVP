@@ -1,0 +1,30 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Databases & local state
+*.db
+*.db-journal
+*.sqlite3
+
+# Environment
+.env
+
+# Node & Frontend
+node_modules/
+.next/
+dist/
+build/
+.turbo/
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.vscode/
