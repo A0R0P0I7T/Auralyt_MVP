@@ -85,8 +85,13 @@ class RobotsPolicy:
                 break
 
             if final_response.status_code == 200:
+                content_bytes = final_response.content
+                if len(content_bytes) > settings.MAX_RESPONSE_SIZE_BYTES:
+                    self.error = f"robots.txt exceeded maximum size limit ({settings.MAX_RESPONSE_SIZE_BYTES} bytes)"
+                    self.is_accessible = False
+                    return
                 self.is_accessible = True
-                content = final_response.text
+                content = content_bytes.decode("utf-8", errors="ignore")
                 self._parse_content(current_url, content)
             elif final_response.status_code in (404, 410):
                 self.is_accessible = True

@@ -166,7 +166,20 @@ class SitemapDiscoverer:
             if current_sm_url.endswith(".gz") or content[:2] == b"\x1f\x8b":
                 try:
                     with gzip.GzipFile(fileobj=io.BytesIO(content)) as gz:
-                        content = gz.read()
+                        decompressed_chunks = []
+                        total_decompressed = 0
+                        while True:
+                            chunk = gz.read(65536)
+                            if not chunk:
+                                break
+                            total_decompressed += len(chunk)
+                            if total_decompressed > settings.MAX_RESPONSE_SIZE_BYTES:
+                                self.warnings.append(
+                                    f"Decompressed sitemap exceeded max limit ({settings.MAX_RESPONSE_SIZE_BYTES} bytes): {current_sm_url}"
+                                )
+                                return
+                            decompressed_chunks.append(chunk)
+                        content = b"".join(decompressed_chunks)
                 except Exception as e:
                     self.warnings.append(f"Failed to decompress gzipped sitemap {current_sm_url}: {e}")
                     return

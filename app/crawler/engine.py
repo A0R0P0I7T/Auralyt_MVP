@@ -267,6 +267,13 @@ class ScraplingCrawler:
                         )
 
                     html = final_response.text or ""
+                    # Enforce decompressed text limit
+                    if len(html.encode("utf-8", errors="ignore")) > settings.MAX_RESPONSE_SIZE_BYTES:
+                        self.warnings.append(
+                            f"Decompressed page content exceeded maximum size ({settings.MAX_RESPONSE_SIZE_BYTES} bytes): {final_url}"
+                        )
+                        return None
+
                     used_js = False
 
                     # Check if static HTML yielded too little content and fallback to browser is allowed
@@ -284,8 +291,12 @@ class ScraplingCrawler:
                                 page_setup=safe_browser_setup
                             )
                             if dynamic_res and dynamic_res.text:
-                                html = dynamic_res.text
-                                used_js = True
+                                rendered_text = dynamic_res.text
+                                if len(rendered_text.encode("utf-8", errors="ignore")) <= settings.MAX_RESPONSE_SIZE_BYTES:
+                                    html = rendered_text
+                                    used_js = True
+                                else:
+                                    self.warnings.append(f"Dynamic render exceeded maximum size limit for {final_url}")
                         except Exception as de:
                             logger.debug(f"DynamicFetcher fallback skipped/failed: {de}")
 

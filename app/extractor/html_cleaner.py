@@ -36,6 +36,11 @@ def clean_html_and_extract_text(html: str) -> Tuple[str, str, str]:
     if not html:
         return "", "", hashlib.sha256(b"").hexdigest()
 
+    # Bound maximum HTML length passed to parser to prevent parser memory exhaustion
+    max_html_chars = 5 * 1024 * 1024
+    if len(html) > max_html_chars:
+        html = html[:max_html_chars]
+
     content_hash = hashlib.sha256(html.encode("utf-8", errors="ignore")).hexdigest()
 
     soup = BeautifulSoup(html, "lxml")

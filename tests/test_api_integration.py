@@ -145,7 +145,7 @@ async def test_create_brand_fact_rejects_malicious_source_url(client: AsyncClien
         "source_url": "javascript:alert(1)"
     })
     assert res.status_code == 400
-    assert "protocol" in res.json()["detail"].lower()
+    assert "http or https" in res.json()["detail"].lower()
 
     # Reject file:// protocol
     res_file = await client.post(f"/api/brands/{brand.id}/facts", json={

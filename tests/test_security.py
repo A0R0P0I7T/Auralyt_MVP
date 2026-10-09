@@ -145,7 +145,8 @@ def test_sanitize_error_summary():
     err = "Connection failed to postgresql+asyncpg://admin:SuperSecretPassword123@db.internal:5432/auralyt"
     sanitized = sanitize_error_summary(err)
     assert "SuperSecretPassword123" not in sanitized
-    assert "admin:***@" in sanitized
+    assert "admin" not in sanitized
+    assert "***@" in sanitized
 
     # Local file path redaction (Windows & Unix)
     win_err = "FileNotFoundError: C:\\Users\\sahaa\\AppData\\Local\\config.json not found"

@@ -234,20 +234,31 @@ async def create_brand_fact(
     if not brand:
         raise HTTPException(status_code=404, detail="Brand not found.")
 
+    fact_source_url = None
     if payload.source_url:
-        s_url = payload.source_url.strip().lower()
-        if not (s_url.startswith("http://") or s_url.startswith("https://")):
+        s_url = payload.source_url.strip()
+        from urllib.parse import urlparse, urlunparse
+        try:
+            parsed_s = urlparse(s_url)
+        except Exception:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="source_url must use HTTP or HTTPS protocol."
+                detail="source_url is malformed."
             )
+        if parsed_s.scheme.lower() not in ("http", "https") or not parsed_s.netloc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="source_url must be an HTTP or HTTPS URL with a valid hostname."
+            )
+        clean_netloc = parsed_s.netloc.split("@")[-1]
+        fact_source_url = urlunparse((parsed_s.scheme.lower(), clean_netloc, parsed_s.path, parsed_s.params, parsed_s.query, ""))
 
     fact = BrandFact(
         brand_id=brand_id,
         profile_version=brand.profile_version,
         fact_type=payload.fact_type,
         fact_value=payload.fact_value,
-        source_url=payload.source_url,
+        source_url=fact_source_url,
         evidence_snippet=payload.evidence_snippet or "Manually added by user",
         extraction_method="user_input",
         confidence=payload.confidence,

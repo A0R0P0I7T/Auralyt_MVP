@@ -173,12 +173,12 @@ def validate_and_resolve_url(raw_url: str) -> Tuple[str, str, str]:
     if scheme not in ("http", "https"):
         raise SecurityValidationError(f"Unsupported scheme '{scheme}'. Only HTTP and HTTPS are permitted.")
 
-    raw_hostname = (parsed.hostname or "").lower().strip()
+    raw_hostname = (parsed.hostname or "").lower().strip().rstrip(".")
     if not raw_hostname:
         raise SecurityValidationError("URL missing valid hostname.")
 
     # Check URL-encoded hostname (e.g. %31%32%37%2e%30%2e%30%2e%31)
-    unquoted_hostname = unquote(raw_hostname).lower()
+    unquoted_hostname = unquote(raw_hostname).lower().strip().rstrip(".")
 
     for host_variant in (raw_hostname, unquoted_hostname):
         if host_variant in BLOCKED_HOSTNAMES:
@@ -235,6 +235,10 @@ def normalize_url(url: str) -> str:
     scheme = parsed.scheme.lower()
     netloc = parsed.netloc.lower()
 
+    # Strip credentials/userinfo from netloc to prevent credential leaks and parser confusion
+    if "@" in netloc:
+        netloc = netloc.split("@")[-1]
+
     # Strip default ports
     if scheme == "http" and netloc.endswith(":80"):
         netloc = netloc[:-3]
@@ -266,12 +270,15 @@ def normalize_url(url: str) -> str:
 def is_same_domain_or_subdomain(target_url: str, base_domain: str) -> bool:
     """
     Strictly check if target_url belongs to the exact base domain or allowed scope.
-    Avoids crawling arbitrary external domains or unrelated subdomains.
+    Avoids crawling arbitrary external domains, unrelated subdomains, or confused suffixes.
     """
     try:
         target_parsed = urlparse(target_url)
-        target_host = (target_parsed.hostname or "").lower()
-        base_clean = base_domain.lower()
+        target_host = (target_parsed.hostname or "").lower().strip().rstrip(".")
+        base_clean = base_domain.lower().strip().rstrip(".")
+
+        if not target_host or not base_clean:
+            return False
 
         # Strip ports if present in base_domain
         if ":" in base_clean:
@@ -289,16 +296,22 @@ def is_same_domain_or_subdomain(target_url: str, base_domain: str) -> bool:
 def sanitize_error_summary(error: Any) -> str:
     """
     Sanitize an exception or error string to prevent information leakage,
-    such as leaking credentials, internal file system paths, or raw stack traces.
+    such as leaking credentials, tokens, cookies, internal file system paths, or raw stack traces.
     """
     if error is None:
         return ""
     msg = str(error)
-    # Mask database connection strings or URLs containing credentials (e.g. postgres://user:password@host)
-    msg = re.sub(r'([a-zA-Z0-9+.-]+://[^:]+):[^@]+@', r'\1:***@', msg)
-    # Mask filesystem paths (Windows C:\... or Unix /home/... /tmp/...)
+    # Mask database connection strings or URLs containing credentials (with or without username)
+    msg = re.sub(r'([a-zA-Z0-9+.-]+://)[^:@/\s]+(?::[^@\s]+)?@', r'\1***@', msg)
+    # Mask authorization headers and bearer tokens
+    msg = re.sub(r'((?:Bearer|token|apikey|api_key|password)\s+)[A-Za-z0-9_\-\.]{8,}', r'\1***', msg, flags=re.IGNORECASE)
+    # Mask sensitive URL query parameters
+    msg = re.sub(r'([?&](?:api[_-]?key|access[_-]?token|token|secret|password|auth)=)[^&\s]+', r'\1***', msg, flags=re.IGNORECASE)
+    # Mask cookies
+    msg = re.sub(r'(Cookie:[^;\n\r]*=)[^;\s]+', r'\1***', msg, flags=re.IGNORECASE)
+    # Mask filesystem paths (Windows C:\... or Unix /home/... /tmp/... /usr/... /app/...)
     msg = re.sub(r'[A-Za-z]:\\[^:\s<>"\']+', '[PATH]', msg)
-    msg = re.sub(r'/(?:Users|home|root|tmp|var|etc)/[^\s<>"\']+', '[PATH]', msg)
+    msg = re.sub(r'/(?:Users|home|root|tmp|var|etc|usr|opt|app)/[^\s<>"\']+', '[PATH]', msg)
     # Truncate to reasonable length (max 300 characters)
     if len(msg) > 300:
         msg = msg[:297] + "..."
