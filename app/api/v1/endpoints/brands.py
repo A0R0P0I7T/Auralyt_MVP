@@ -1,4 +1,4 @@
-"""Brands and Profiling API endpoints for Auralyt MVP — Engine 1."""
+import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, desc, func
@@ -13,6 +13,8 @@ from app.schemas.brand_fact import BrandFactResponse, BrandFactCreateRequest, Br
 from app.schemas.profile_summary import ProfileSummaryResponse
 from app.crawler.security import SecurityValidationError
 from app.services.profiler_service import ProfilerService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/brands", tags=["Brands & Profiling"])
 
@@ -56,9 +58,10 @@ async def onboard_and_profile_brand(
             detail=f"Security/URL validation error: {str(se)}"
         )
     except Exception as e:
+        logger.exception("Failed to initiate profiling")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to initiate profiling: {str(e)}"
+            detail="Failed to initiate profiling due to an internal error."
         )
 
 
@@ -230,6 +233,14 @@ async def create_brand_fact(
     brand = await db.get(Brand, brand_id)
     if not brand:
         raise HTTPException(status_code=404, detail="Brand not found.")
+
+    if payload.source_url:
+        s_url = payload.source_url.strip().lower()
+        if not (s_url.startswith("http://") or s_url.startswith("https://")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="source_url must use HTTP or HTTPS protocol."
+            )
 
     fact = BrandFact(
         brand_id=brand_id,

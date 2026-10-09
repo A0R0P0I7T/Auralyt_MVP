@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import async_session_factory
 from app.db.models import Brand, ProfileRun, CrawledPage, BrandFact, utc_now
-from app.crawler.security import validate_and_resolve_url, SecurityValidationError
+from app.crawler.security import validate_and_resolve_url, SecurityValidationError, sanitize_error_summary
 from app.crawler.engine import ScraplingCrawler
 from app.extractor.fact_synthesizer import FactSynthesizer
 
@@ -221,7 +221,7 @@ class ProfilerService:
                 run.status = "failed"
                 run.completed_at = utc_now()
                 run.duration_seconds = round(time.time() - start_time, 2)
-                run.error_summary = str(e)
+                run.error_summary = sanitize_error_summary(e)
                 run.warnings = crawler.warnings
                 await db.commit()
 

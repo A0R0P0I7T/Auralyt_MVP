@@ -130,3 +130,28 @@ async def test_crawled_pages_pagination(client: AsyncClient, test_db_session):
     assert filtered_res.status_code == 200
     fdata = filtered_res.json()
     assert fdata["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_create_brand_fact_rejects_malicious_source_url(client: AsyncClient, test_db_session):
+    brand = Brand(domain="factsecurity.org", business_name="FactSecurity Org")
+    test_db_session.add(brand)
+    await test_db_session.commit()
+
+    # Reject javascript: pseudo-protocol
+    res = await client.post(f"/api/brands/{brand.id}/facts", json={
+        "fact_type": "product_service",
+        "fact_value": "Malicious script link test",
+        "source_url": "javascript:alert(1)"
+    })
+    assert res.status_code == 400
+    assert "protocol" in res.json()["detail"].lower()
+
+    # Reject file:// protocol
+    res_file = await client.post(f"/api/brands/{brand.id}/facts", json={
+        "fact_type": "product_service",
+        "fact_value": "Local file read link test",
+        "source_url": "file:///etc/passwd"
+    })
+    assert res_file.status_code == 400
+
