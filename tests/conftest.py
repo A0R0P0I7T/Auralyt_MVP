@@ -37,3 +37,11 @@ async def client(test_db_session):
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
         yield ac
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def cleanup_proxy():
+    yield
+    from app.crawler.transport import stop_local_proxy
+    await stop_local_proxy()
+

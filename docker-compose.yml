@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  # Dedicated Egress Forward Proxy (Connection-time SSRF & DNS rebinding enforcement)
+  egress-proxy:
+    image: ubuntu/squid:5.2-22.04_beta
+    container_name: auralyt-egress-proxy
+    restart: unless-stopped
+    volumes:
+      - ./docker/squid.conf:/etc/squid/squid.conf:ro
+    networks:
+      - egress-network
+      - public-internet
+
+  # Main Application & Crawler Worker
+  auralyt-app:
+    build: .
+    container_name: auralyt-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=sqlite+aiosqlite:///./auralyt.db
+      - EGRESS_PROXY_URL=http://egress-proxy:3128
+      - ENFORCE_EGRESS_PROXY=true
+      - ALLOW_BROWSER_FALLBACK=false
+      - BROWSER_ISOLATION_MODE=none
+    depends_on:
+      - egress-proxy
+    networks:
+      - egress-network
+
+networks:
+  # Internal network shared between app and proxy. App has NO direct public internet access.
+  egress-network:
+    internal: true
+  # Only the proxy is bridged to the external internet
+  public-internet:
+    driver: bridge

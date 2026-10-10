@@ -33,8 +33,14 @@ class Settings(BaseSettings):
     USER_AGENT: str = "AuralytBot/1.0 (+https://auralyt.ai/bot)"
 
     # Browser Fallback
-    ALLOW_BROWSER_FALLBACK: bool = True
+    ALLOW_BROWSER_FALLBACK: bool = False
     MIN_TEXT_CHARS_FOR_STATIC: int = 120
+
+    # Network Egress & SSRF Protection
+    EGRESS_PROXY_URL: Optional[str] = Field(default=None, description="External egress proxy URL (e.g. http://egress-proxy:4750)")
+    ENFORCE_EGRESS_PROXY: bool = Field(default=False, description="Enforce that all outbound traffic passes through the egress proxy")
+    BROWSER_ISOLATION_MODE: str = Field(default="none", description="Isolation mode for browser execution: none, egress_proxy, container_sandbox")
+    BROWSER_PROXY_URL: Optional[str] = Field(default=None, description="Dedicated proxy for browser requests (defaults to EGRESS_PROXY_URL)")
 
     # Optional LLM Enhancement (Off by default)
     LLM_ENABLED: bool = False
@@ -42,5 +48,22 @@ class Settings(BaseSettings):
     LLM_API_KEY: Optional[str] = None
     LLM_MODEL: str = "gemini-1.5-flash"
 
+    def validate_security_configuration(self) -> None:
+        """Validate security boundaries for the current environment."""
+        env = self.ENVIRONMENT.lower()
+        if env == "production":
+            if not self.EGRESS_PROXY_URL:
+                raise ValueError(
+                    "Production environment requires an explicitly configured EGRESS_PROXY_URL "
+                    "for connection-time SSRF and DNS-rebinding protection."
+                )
+            if self.ALLOW_BROWSER_FALLBACK and self.BROWSER_ISOLATION_MODE not in ("egress_proxy", "container_sandbox"):
+                raise ValueError(
+                    "Browser fallback cannot be enabled in production without a validated "
+                    "isolated execution mode ('egress_proxy' or 'container_sandbox')."
+                )
+
 
 settings = Settings()
+settings.validate_security_configuration()
+

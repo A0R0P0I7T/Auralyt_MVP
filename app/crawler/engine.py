@@ -16,6 +16,7 @@ from app.crawler.security import (
     SecurityValidationError,
     BLOCKED_HOSTNAMES
 )
+from app.crawler.transport import safe_fetch_scrapling, safe_fetch_dynamic
 from app.crawler.robots import RobotsPolicy
 from app.crawler.sitemap import SitemapDiscoverer, score_url_priority
 from app.extractor.page_extractor import extract_page_content
@@ -26,10 +27,21 @@ logger = logging.getLogger(__name__)
 def safe_browser_setup(page) -> None:
     """
     Playwright page setup handler for sandboxing browser execution.
-    Intercepts and blocks any subresource requests to prohibited or private networks.
+    Intercepts and blocks any subresource requests to prohibited or private networks,
+    as well as WebSockets, media streams, and non-HTTP protocols.
     """
     def intercept_route(route, request):
         req_url = request.url
+        resource_type = getattr(request, "resource_type", "")
+        # Block unnecessary or dangerous resource types
+        if resource_type in ("websocket", "media"):
+            route.abort("blockedbyclient")
+            return
+
+        if req_url.startswith(("ws://", "wss://", "file://", "ftp://", "data:")):
+            route.abort("blockedbyclient")
+            return
+
         try:
             # Validate every subresource request against SSRF policies
             validate_and_resolve_url(req_url)
@@ -200,12 +212,11 @@ class ScraplingCrawler:
                             self.warnings.append(f"Redirect target out of domain scope: {norm_target}")
                             return None
 
-                        # Make request with follow_redirects=False to inspect redirects explicitly
-                        response = await AsyncFetcher.get(
+                        # Make request through centralized safe transport
+                        response = await safe_fetch_scrapling(
                             norm_target,
                             timeout=settings.REQUEST_TIMEOUT_SECONDS,
-                            headers={"User-Agent": settings.USER_AGENT},
-                            follow_redirects=False
+                            headers={"User-Agent": settings.USER_AGENT}
                         )
 
                         # Check for 3xx redirects
@@ -283,11 +294,9 @@ class ScraplingCrawler:
                     ):
                         try:
                             logger.info(f"Static HTML minimal for {final_url}, attempting sandboxed DynamicFetcher.")
-                            dynamic_res = DynamicFetcher.fetch(
+                            dynamic_res = safe_fetch_dynamic(
                                 final_url,
-                                timeout=settings.REQUEST_TIMEOUT_SECONDS * 1000,
-                                disable_resources=True,
-                                blocked_domains=BLOCKED_HOSTNAMES,
+                                timeout_ms=settings.REQUEST_TIMEOUT_SECONDS * 1000,
                                 page_setup=safe_browser_setup
                             )
                             if dynamic_res and dynamic_res.text:

@@ -16,6 +16,7 @@ from app.crawler.security import (
     validate_and_resolve_url,
     SecurityValidationError
 )
+from app.crawler.transport import create_safe_httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ class SitemapDiscoverer:
 
         close_client = False
         if client is None:
-            client = httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT_SECONDS)
+            client = await create_safe_httpx_client(timeout=settings.REQUEST_TIMEOUT_SECONDS)
             close_client = True
 
         visited_sitemaps: Set[str] = set()

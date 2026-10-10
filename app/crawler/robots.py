@@ -13,6 +13,7 @@ from app.crawler.security import (
     is_same_domain_or_subdomain,
     SecurityValidationError
 )
+from app.crawler.transport import create_safe_httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class RobotsPolicy:
         start_url = urljoin(self.base_url, "/robots.txt")
         close_client = False
         if client is None:
-            client = httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT_SECONDS)
+            client = await create_safe_httpx_client(timeout=settings.REQUEST_TIMEOUT_SECONDS)
             close_client = True
 
         try:
