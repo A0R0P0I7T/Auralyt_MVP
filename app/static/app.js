@@ -3,6 +3,10 @@ let currentRunId = null;
 let pollInterval = null;
 let profileData = null;
 let pagesCurrentPage = 1;
+let promptsCurrentPage = 1;
+let promptsTotalPages = 1;
+let promptsSearchTimer = null;
+let currentPromptsData = [];
 
 function switchTab(tabName) {
   document.querySelectorAll(".tab-content").forEach(el => el.style.display = "none");
@@ -16,6 +20,10 @@ function switchTab(tabName) {
 
   if (tabName === "profile" && currentBrandId) loadBrandProfile(currentBrandId);
   if (tabName === "facts" && currentBrandId) renderFactsList();
+  if (tabName === "prompts" && currentBrandId) {
+    loadPromptCoverage();
+    loadPrompts(1);
+  }
   if (tabName === "pages" && currentBrandId) loadCrawledPages(1);
 }
 
@@ -412,3 +420,348 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+/* ==========================================================
+   ENGINE 2: PROMPT INTELLIGENCE FUNCTIONS
+   ========================================================== */
+
+async function handleGeneratePrompts() {
+  if (!currentBrandId) {
+    alert("Please select or onboard a brand first.");
+    return;
+  }
+
+  const errorBanner = document.getElementById("prompts-error-banner");
+  errorBanner.style.display = "none";
+
+  const btn = document.getElementById("generate-prompts-btn");
+  const countSelect = document.getElementById("prompt_count_select");
+  const langInput = document.getElementById("prompt_lang_override");
+  const forceCheckbox = document.getElementById("prompt_force_regen");
+
+  const promptCount = parseInt(countSelect.value) || 20;
+  const langOverride = langInput.value.trim() || null;
+  const forceRegen = forceCheckbox.checked;
+
+  btn.disabled = true;
+  btn.innerText = "Generating Prompts...";
+
+  try {
+    const res = await fetch(`/api/brands/${currentBrandId}/prompts/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt_count: promptCount,
+        language: langOverride,
+        force_regenerate: forceRegen
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || "Failed to generate evaluation prompts.");
+    }
+
+    // Display run status
+    const badge = document.getElementById("prompt-run-status-badge");
+    badge.style.display = "inline-block";
+    badge.innerText = data.status.toUpperCase();
+    badge.className = `badge badge-${data.status === "completed" ? "completed" : "pending"}`;
+
+    document.getElementById("prompts-run-info").style.display = "block";
+    document.getElementById("info-run-id").innerText = data.id.substring(0, 8);
+    document.getElementById("info-provider").innerText = data.provider;
+    document.getElementById("info-profile-ver").innerText = `v${data.profile_version}`;
+    document.getElementById("info-count").innerText = data.prompts_generated;
+    document.getElementById("info-duration").innerText = data.duration_seconds || "0.0";
+
+    // Reload coverage and prompts
+    await loadPromptCoverage();
+    await loadPrompts(1);
+
+  } catch (err) {
+    errorBanner.innerText = err.message;
+    errorBanner.style.display = "block";
+  } finally {
+    btn.disabled = false;
+    btn.innerText = "⚡ Generate Prompts";
+  }
+}
+
+async function loadPromptCoverage() {
+  if (!currentBrandId) return;
+  try {
+    const res = await fetch(`/api/brands/${currentBrandId}/prompts/coverage`);
+    if (!res.ok) return;
+    const cov = await res.json();
+
+    document.getElementById("cov-total-prompts").innerText = cov.total_prompts || 0;
+    document.getElementById("cov-approved-prompts").innerText = cov.approved_prompts || 0;
+    document.getElementById("cov-avg-score").innerText = (cov.average_quality_score || 0).toFixed(2);
+
+    const categories = Object.keys(cov.by_category || {});
+    document.getElementById("cov-categories-count").innerText = categories.length;
+
+    const chipsContainer = document.getElementById("category-chips-list");
+    if (categories.length === 0) {
+      chipsContainer.innerHTML = `<span class="category-chip">No prompts generated yet</span>`;
+    } else {
+      chipsContainer.innerHTML = categories.map(cat => {
+        const count = cov.by_category[cat];
+        return `
+          <span class="category-chip active" style="cursor: pointer;" onclick="filterCategoryFromChip('${cat}')">
+            <strong>${escapeHtml(formatCategoryName(cat))}</strong> (${count})
+          </span>
+        `;
+      }).join("");
+    }
+  } catch (e) {
+    console.error("Failed to load prompt coverage:", e);
+  }
+}
+
+function filterCategoryFromChip(cat) {
+  const catSelect = document.getElementById("filter-prompt-category");
+  catSelect.value = cat;
+  loadPrompts(1);
+}
+
+function formatCategoryName(cat) {
+  return cat.split("_").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+async function loadPrompts(page = 1) {
+  if (!currentBrandId) return;
+  promptsCurrentPage = page;
+
+  const cat = document.getElementById("filter-prompt-category").value;
+  const stage = document.getElementById("filter-prompt-stage").value;
+  const approved = document.getElementById("filter-prompt-approved").value;
+  const search = document.getElementById("filter-prompt-search").value.trim();
+
+  let url = `/api/brands/${currentBrandId}/prompts?page=${page}&page_size=15`;
+  if (cat) url += `&category=${encodeURIComponent(cat)}`;
+  if (stage) url += `&buying_stage=${encodeURIComponent(stage)}`;
+  if (approved !== "") url += `&is_approved=${encodeURIComponent(approved)}`;
+  if (search) url += `&search=${encodeURIComponent(search)}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    currentPromptsData = data.items;
+    promptsTotalPages = data.total_pages || 1;
+
+    renderPromptsTable(data.items);
+
+    document.getElementById("prompts-list-count-label").innerText = `Showing ${data.items.length} of ${data.total} prompts`;
+    document.getElementById("prompts-pagination-info").innerText = `Page ${data.page} of ${data.total_pages || 1} (${data.total} total)`;
+    document.getElementById("prev-prompts-btn").disabled = data.page <= 1;
+    document.getElementById("next-prompts-btn").disabled = data.page >= data.total_pages;
+
+  } catch (e) {
+    console.error("Failed to load prompts:", e);
+  }
+}
+
+function renderPromptsTable(items) {
+  const tbody = document.getElementById("prompts-table-body");
+  if (!items || items.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">No matching prompts found.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = items.map(p => {
+    const scoreVal = p.quality_score || 0;
+    let scoreClass = "score-low";
+    if (scoreVal >= 0.8) scoreClass = "score-high";
+    else if (scoreVal >= 0.6) scoreClass = "score-mid";
+
+    const isApproved = p.is_approved;
+    const statusPill = isApproved
+      ? `<span class="badge" style="background: rgba(16,185,129,0.2); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.4);">Approved</span>`
+      : `<span class="badge" style="background: rgba(148,163,184,0.2); color: #94a3b8; border: 1px solid rgba(148,163,184,0.4);">Pending</span>`;
+
+    const editedPill = p.user_edited ? `<span class="badge-edited">EDITED</span>` : "";
+
+    return `
+      <tr style="${p.is_archived ? 'opacity: 0.5;' : ''}">
+        <td>
+          <div class="prompt-text-cell">
+            ${escapeHtml(p.text)} ${editedPill}
+          </div>
+        </td>
+        <td>
+          <span class="badge" style="background: #334155; color: #f8fafc; font-size: 0.75rem;">
+            ${escapeHtml(formatCategoryName(p.category))}
+          </span>
+        </td>
+        <td>
+          <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+            <span class="badge badge-stage">${escapeHtml(p.buying_stage)}</span>
+            <span class="badge badge-intent">${escapeHtml(p.intent)}</span>
+          </div>
+        </td>
+        <td>
+          <span class="score-badge ${scoreClass}">★ ${(scoreVal).toFixed(2)}</span>
+        </td>
+        <td>
+          <button class="btn btn-secondary btn-sm" onclick="openPromptEvidenceModal('${p.id}')">
+            Grounding (${p.provenance_fact_ids.length})
+          </button>
+        </td>
+        <td>
+          ${statusPill}
+        </td>
+        <td>
+          <div style="display: flex; gap: 0.35rem; align-items: center;">
+            <button class="btn btn-sm ${isApproved ? 'btn-secondary' : 'btn-success'}" onclick="togglePromptApproval('${p.id}', ${isApproved})" title="${isApproved ? 'Unapprove' : 'Approve'}">
+              ${isApproved ? '✓' : 'Approve'}
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="openEditPromptModal('${p.id}')" title="Edit">
+              ✎
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="archivePrompt('${p.id}')" title="Archive" style="color: var(--accent-danger);">
+              ✕
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function debouncePromptsSearch() {
+  if (promptsSearchTimer) clearTimeout(promptsSearchTimer);
+  promptsSearchTimer = setTimeout(() => {
+    loadPrompts(1);
+  }, 300);
+}
+
+function changePromptsPage(delta) {
+  loadPrompts(promptsCurrentPage + delta);
+}
+
+async function togglePromptApproval(promptId, currentStatus) {
+  try {
+    const res = await fetch(`/api/prompts/${promptId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_approved: !currentStatus })
+    });
+    if (res.ok) {
+      loadPromptCoverage();
+      loadPrompts(promptsCurrentPage);
+    }
+  } catch (e) {
+    alert("Approval update failed: " + e.message);
+  }
+}
+
+async function archivePrompt(promptId) {
+  if (!confirm("Archive this prompt? It will be excluded from evaluation sets.")) return;
+  try {
+    const res = await fetch(`/api/prompts/${promptId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_archived: true })
+    });
+    if (res.ok) {
+      loadPromptCoverage();
+      loadPrompts(promptsCurrentPage);
+    }
+  } catch (e) {
+    alert("Archive failed: " + e.message);
+  }
+}
+
+async function openEditPromptModal(promptId) {
+  try {
+    const res = await fetch(`/api/prompts/${promptId}`);
+    if (!res.ok) return;
+    const p = await res.json();
+
+    document.getElementById("edit-prompt-id").value = p.id;
+    document.getElementById("edit-prompt-text").value = p.text;
+    document.getElementById("edit-prompt-approved").checked = p.is_approved;
+    document.getElementById("edit-prompt-archived").checked = p.is_archived;
+
+    document.getElementById("edit-prompt-modal").style.display = "flex";
+  } catch (e) {
+    console.error("Open edit prompt error:", e);
+  }
+}
+
+async function handleSavePromptEdit(event) {
+  event.preventDefault();
+  const promptId = document.getElementById("edit-prompt-id").value;
+  const newText = document.getElementById("edit-prompt-text").value.trim();
+  const isApproved = document.getElementById("edit-prompt-approved").checked;
+  const isArchived = document.getElementById("edit-prompt-archived").checked;
+
+  try {
+    const res = await fetch(`/api/prompts/${promptId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: newText,
+        is_approved: isApproved,
+        is_archived: isArchived
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to update prompt.");
+    }
+
+    closeModal("edit-prompt-modal");
+    loadPromptCoverage();
+    loadPrompts(promptsCurrentPage);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function openPromptEvidenceModal(promptId) {
+  try {
+    const res = await fetch(`/api/prompts/${promptId}`);
+    if (!res.ok) return;
+    const p = await res.json();
+
+    document.getElementById("pe-prompt-text").innerText = p.text;
+    document.getElementById("pe-category").innerText = formatCategoryName(p.category);
+    document.getElementById("pe-stage").innerText = `Stage: ${p.buying_stage.toUpperCase()}`;
+    document.getElementById("pe-intent").innerText = `Intent: ${p.intent.toUpperCase()}`;
+    document.getElementById("pe-score").innerText = `Score: ${(p.quality_score || 0).toFixed(2)}`;
+
+    // Scores breakdown
+    const scores = p.scores || {};
+    const scoresGrid = document.getElementById("pe-scores-grid");
+    scoresGrid.innerHTML = Object.entries(scores).map(([k, v]) => `
+      <div style="background: #0f172a; padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+        <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: capitalize;">${k.replace(/_/g, ' ')}</div>
+        <div style="font-size: 0.95rem; font-weight: 700; color: #93c5fd;">${typeof v === 'number' ? v.toFixed(2) : v}</div>
+      </div>
+    `).join("");
+
+    // Grounded evidence snippets
+    const evidenceList = document.getElementById("pe-evidence-list");
+    const evidence = p.grounding_evidence || [];
+    if (evidence.length === 0) {
+      evidenceList.innerHTML = `<div style="color: var(--text-muted); font-size: 0.85rem;">No direct text snippet linked. Grounded via verified category facts.</div>`;
+    } else {
+      evidenceList.innerHTML = evidence.map(ev => `
+        <div style="background: #0f172a; border-left: 3px solid var(--accent-primary); padding: 0.6rem 0.85rem; border-radius: 0 6px 6px 0; font-size: 0.85rem; color: #cbd5e1;">
+          "${escapeHtml(ev)}"
+        </div>
+      `).join("");
+    }
+
+    document.getElementById("prompt-evidence-modal").style.display = "flex";
+  } catch (e) {
+    console.error("Open prompt evidence error:", e);
+  }
+}
+

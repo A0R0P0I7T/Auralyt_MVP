@@ -9,10 +9,10 @@
 <body>
   <header>
     <div class="logo-area">
-      <div class="logo-badge">ENGINE 1</div>
+      <div class="logo-badge">ENGINE 1 & 2</div>
       <div>
-        <div class="logo-title">Auralyt Profiler</div>
-        <div class="logo-subtitle">Website Ground-Truth Intelligence</div>
+        <div class="logo-title">Auralyt Intelligence</div>
+        <div class="logo-subtitle">Website Ground-Truth & Prompt Intelligence</div>
       </div>
     </div>
     <nav class="nav-links">
@@ -20,6 +20,7 @@
       <button class="nav-btn" id="nav-progress" onclick="switchTab('progress')">Crawl Progress</button>
       <button class="nav-btn" id="nav-profile" onclick="switchTab('profile')">Brand Profile</button>
       <button class="nav-btn" id="nav-facts" onclick="switchTab('facts')">Fact Verification</button>
+      <button class="nav-btn" id="nav-prompts" onclick="switchTab('prompts')">Prompt Intelligence</button>
       <button class="nav-btn" id="nav-pages" onclick="switchTab('pages')">Crawled Pages</button>
     </nav>
   </header>
@@ -130,6 +131,7 @@
           <div style="display: flex; gap: 0.5rem;">
             <button class="btn btn-secondary btn-sm" onclick="triggerRefresh()">🔄 Refresh Crawl</button>
             <button class="btn btn-success btn-sm" onclick="switchTab('facts')">✓ Verify Facts</button>
+            <button class="btn btn-primary btn-sm" onclick="switchTab('prompts')">🧠 Prompt Intelligence →</button>
           </div>
         </div>
 
@@ -235,7 +237,144 @@
       </div>
     </section>
 
-    <!-- TAB 5: Crawled Pages Explorer -->
+    <!-- TAB 5: Prompt Intelligence (Engine 2) -->
+    <section id="tab-prompts" class="tab-content" style="display: none;">
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+          <h2 class="card-title">🧠 Engine 2: Prompt Intelligence & AI Evaluation Matrix</h2>
+          <span id="prompt-run-status-badge" class="badge badge-pending" style="display: none;">READY</span>
+        </div>
+        <p class="card-desc">
+          Generate high-intent prompts grounded in Engine 1's ground-truth profile across buying stages and search intents to evaluate how LLM systems (ChatGPT, Perplexity, Gemini, Claude) represent this brand.
+        </p>
+
+        <!-- Generation Controls -->
+        <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.25rem; margin-top: 1rem;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; align-items: flex-end;">
+            <div class="form-group">
+              <label for="prompt_count_select">Target Prompts Count</label>
+              <select id="prompt_count_select">
+                <option value="10">10 Prompts (Quick)</option>
+                <option value="20" selected>20 Prompts (Standard)</option>
+                <option value="30">30 Prompts (Comprehensive)</option>
+                <option value="50">50 Prompts (Deep Matrix)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="prompt_lang_override">Language Override</label>
+              <input type="text" id="prompt_lang_override" placeholder="Default (brand profile)">
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem; padding-bottom: 0.6rem;">
+              <input type="checkbox" id="prompt_force_regen" style="width: auto;">
+              <label for="prompt_force_regen" style="margin-bottom: 0; cursor: pointer; font-size: 0.85rem;">Force Regenerate (Bypass Cache)</label>
+            </div>
+            <div>
+              <button class="btn btn-primary" id="generate-prompts-btn" onclick="handleGeneratePrompts()" style="width: 100%;">
+                ⚡ Generate Prompts
+              </button>
+            </div>
+          </div>
+          <div id="prompts-error-banner" class="banner banner-danger" style="display: none; margin-top: 1rem; margin-bottom: 0;"></div>
+          <div id="prompts-run-info" style="display: none; margin-top: 1rem; font-size: 0.85rem; color: var(--text-secondary);">
+            Run ID: <code id="info-run-id" style="color: #93c5fd;"></code> | Provider: <span id="info-provider" style="font-weight: 600;"></span> | Profile Ver: <span id="info-profile-ver" style="font-weight: 600;"></span> | Generated: <span id="info-count" style="color: #6ee7b7; font-weight: 600;"></span> | Duration: <span id="info-duration"></span>s
+          </div>
+        </div>
+      </div>
+
+      <!-- Coverage Summary Card -->
+      <div class="card" style="margin-bottom: 1.5rem;" id="coverage-card">
+        <h3 style="font-size: 1.1rem; margin-bottom: 0.75rem; color: var(--text-primary);">📊 Intent & Stage Coverage Matrix</h3>
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-value" id="cov-total-prompts">0</div>
+            <div class="stat-label">Total Prompts</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" style="color: var(--accent-success);" id="cov-approved-prompts">0</div>
+            <div class="stat-label">Approved</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" style="color: var(--accent-info);" id="cov-categories-count">0</div>
+            <div class="stat-label">Categories Covered</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" style="color: #a78bfa;" id="cov-avg-score">0.00</div>
+            <div class="stat-label">Avg Quality Score</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 1.25rem;">
+          <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 0.5rem;">Categories Represented</div>
+          <div class="category-chips" id="category-chips-list">
+            <span class="category-chip">No prompts generated yet</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Prompts Explorer Card -->
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.75rem;">
+          <h3 style="font-size: 1.1rem; color: var(--text-primary);">📝 Generated Evaluation Prompts</h3>
+          <div style="font-size: 0.85rem; color: var(--text-muted);" id="prompts-list-count-label">Showing 0 prompts</div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+          <select id="filter-prompt-category" onchange="loadPrompts(1)">
+            <option value="">All Categories</option>
+            <option value="discovery">Discovery</option>
+            <option value="recommendations">Recommendations</option>
+            <option value="comparisons">Comparisons</option>
+            <option value="product_evaluation">Product Evaluation</option>
+            <option value="use_cases">Use Cases</option>
+            <option value="pricing_value">Pricing & Value</option>
+            <option value="audience_specific">Audience Specific</option>
+            <option value="brand_research">Brand Research</option>
+          </select>
+          <select id="filter-prompt-stage" onchange="loadPrompts(1)">
+            <option value="">All Buying Stages</option>
+            <option value="awareness">Awareness</option>
+            <option value="consideration">Consideration</option>
+            <option value="decision">Decision</option>
+          </select>
+          <select id="filter-prompt-approved" onchange="loadPrompts(1)">
+            <option value="">All Approval Status</option>
+            <option value="true">Approved Only</option>
+            <option value="false">Pending Approval</option>
+          </select>
+          <input type="text" id="filter-prompt-search" placeholder="Search prompt text..." oninput="debouncePromptsSearch()">
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th style="min-width: 320px;">Prompt Question</th>
+                <th>Category</th>
+                <th>Intent & Stage</th>
+                <th>Quality</th>
+                <th>Grounding</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="prompts-table-body">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No prompts generated yet. Click "Generate Prompts" above.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem;">
+          <div id="prompts-pagination-info" style="font-size: 0.85rem; color: var(--text-muted);">Page 1 of 1</div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary btn-sm" id="prev-prompts-btn" onclick="changePromptsPage(-1)" disabled>Previous</button>
+            <button class="btn btn-secondary btn-sm" id="next-prompts-btn" onclick="changePromptsPage(1)" disabled>Next</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 6: Crawled Pages Explorer -->
     <section id="tab-pages" class="tab-content" style="display: none;">
       <div class="card">
         <h2 class="card-title">📄 Crawled Pages Explorer</h2>
@@ -344,6 +483,64 @@
         <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">EXTRACTED READABLE TEXT</div>
         <pre id="page-detail-text" style="background: #0f172a; padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); font-size: 0.8rem; max-height: 300px; overflow-y: auto; white-space: pre-wrap;"></pre>
       </div>
+    </div>
+  </div>
+
+  <!-- Edit Prompt Modal -->
+  <div class="modal-overlay" id="edit-prompt-modal">
+    <div class="modal-content">
+      <button class="close-btn" onclick="closeModal('edit-prompt-modal')">&times;</button>
+      <h3 style="font-size: 1.15rem; margin-bottom: 0.5rem;">Edit Evaluation Prompt</h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+        Edits are recorded with audit history. Modifying text automatically marks the prompt as user-edited.
+      </p>
+      <form onsubmit="handleSavePromptEdit(event)">
+        <input type="hidden" id="edit-prompt-id">
+        <div class="form-group" style="margin-bottom: 1rem;">
+          <label for="edit-prompt-text">Prompt Question Text *</label>
+          <textarea id="edit-prompt-text" rows="4" required style="width: 100%;"></textarea>
+        </div>
+        <div style="display: flex; gap: 1.5rem; margin-bottom: 1.5rem;">
+          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.9rem;">
+            <input type="checkbox" id="edit-prompt-approved" style="width: auto;"> Approved for AI Evaluation
+          </label>
+          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.9rem; color: var(--accent-danger);">
+            <input type="checkbox" id="edit-prompt-archived" style="width: auto;"> Archived
+          </label>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('edit-prompt-modal')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Prompt Grounding & Evidence Modal -->
+  <div class="modal-overlay" id="prompt-evidence-modal">
+    <div class="modal-content" style="max-width: 650px;">
+      <button class="close-btn" onclick="closeModal('prompt-evidence-modal')">&times;</button>
+      <h3 style="font-size: 1.15rem; margin-bottom: 0.5rem;">Prompt Grounding & Scoring Inspector</h3>
+      <div style="font-size: 0.95rem; font-weight: 600; color: #f8fafc; margin-bottom: 1rem; line-height: 1.4;" id="pe-prompt-text"></div>
+      
+      <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <span class="badge" id="pe-category"></span>
+        <span class="badge badge-stage" id="pe-stage"></span>
+        <span class="badge badge-intent" id="pe-intent"></span>
+        <span class="score-badge score-high" id="pe-score"></span>
+      </div>
+
+      <div style="margin-bottom: 1.25rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem; font-weight: 600;">EXPLAINABLE SCORING BREAKDOWN</div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.5rem;" id="pe-scores-grid"></div>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem; font-weight: 600;">GROUNDED EVIDENCE FROM ENGINE 1 PROFILE</div>
+        <div id="pe-evidence-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+      </div>
+
+      <button class="btn btn-secondary" onclick="closeModal('prompt-evidence-modal')">Close</button>
     </div>
   </div>
 

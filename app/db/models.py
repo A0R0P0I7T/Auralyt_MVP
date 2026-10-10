@@ -31,6 +31,8 @@ class Brand(Base):
     runs: Mapped[List["ProfileRun"]] = relationship("ProfileRun", back_populates="brand", cascade="all, delete-orphan", order_by="desc(ProfileRun.started_at)")
     pages: Mapped[List["CrawledPage"]] = relationship("CrawledPage", back_populates="brand", cascade="all, delete-orphan")
     facts: Mapped[List["BrandFact"]] = relationship("BrandFact", back_populates="brand", cascade="all, delete-orphan")
+    prompt_runs: Mapped[List["PromptRun"]] = relationship("PromptRun", back_populates="brand", cascade="all, delete-orphan", order_by="desc(PromptRun.created_at)")
+    prompts: Mapped[List["PromptCandidate"]] = relationship("PromptCandidate", back_populates="brand", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_brands_domain_org", "domain", "organization_id"),
@@ -127,3 +129,70 @@ class BrandFact(Base):
     __table_args__ = (
         Index("ix_brand_facts_type_brand", "brand_id", "fact_type"),
     )
+
+
+class PromptRun(Base):
+    __tablename__ = "prompt_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    brand_id: Mapped[str] = mapped_column(String(36), ForeignKey("brands.id", ondelete="CASCADE"), nullable=False, index=True)
+    profile_version: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+
+    # Status: pending, running, completed, failed, cancelled
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True, nullable=False)
+    prompt_count_requested: Mapped[int] = mapped_column(Integer, default=20)
+    prompts_generated: Mapped[int] = mapped_column(Integer, default=0)
+    provider: Mapped[str] = mapped_column(String(64), default="deterministic")
+    model_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    tokens_used: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    config_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    brand: Mapped["Brand"] = relationship("Brand", back_populates="prompt_runs")
+    prompts: Mapped[List["PromptCandidate"]] = relationship("PromptCandidate", back_populates="run", cascade="all, delete-orphan")
+
+
+class PromptCandidate(Base):
+    __tablename__ = "prompt_candidates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    brand_id: Mapped[str] = mapped_column(String(36), ForeignKey("brands.id", ondelete="CASCADE"), nullable=False, index=True)
+    prompt_run_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompt_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    profile_version: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_text: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    intent: Mapped[str] = mapped_column(String(64), default="informational", nullable=False)
+    buying_stage: Mapped[str] = mapped_column(String(64), default="consideration", nullable=False)
+    target_audience: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    target_product_service: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    language: Mapped[str] = mapped_column(String(20), default="en", nullable=False)
+
+    provenance_fact_ids: Mapped[List[str]] = mapped_column(JSON, default=list)
+    grounding_evidence: Mapped[List[str]] = mapped_column(JSON, default=list)
+    scores: Mapped[dict] = mapped_column(JSON, default=dict)
+    quality_score: Mapped[float] = mapped_column(Float, default=1.0, index=True)
+
+    is_approved: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    user_edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    edit_history: Mapped[List[dict]] = mapped_column(JSON, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    brand: Mapped["Brand"] = relationship("Brand", back_populates="prompts")
+    run: Mapped["PromptRun"] = relationship("PromptRun", back_populates="prompts")
+
+    __table_args__ = (
+        Index("ix_prompt_candidates_brand_cat", "brand_id", "category"),
+        Index("ix_prompt_candidates_brand_ver", "brand_id", "profile_version"),
+    )
+
