@@ -260,20 +260,19 @@ class FactSynthesizer:
                     if any(w in h_clean.lower() for w in ("features", "what we do", "capabilities", "solutions", "all-in-one")):
                         continue
                     if 3 <= len(h_clean) <= 60 and h_clean.lower() not in seen_products:
-                        if p.page_type == "product_service":
-                            seen_products.add(h_clean.lower())
-                            facts.append(BrandFact(
-                                brand_id=self.brand_id,
-                                profile_version=self.profile_version,
-                                fact_type="product_service",
-                                fact_value={"name": h_clean, "page_title": p.title, "url": p.final_url},
-                                source_page_id=p.id,
-                                source_url=p.final_url,
-                                evidence_snippet=f"Heading '{h_clean}' on product page ({p.final_url})",
-                                extraction_method="heading_heuristic",
-                                confidence=0.80,
-                                user_confirmed=False
-                            ))
+                        seen_products.add(h_clean.lower())
+                        facts.append(BrandFact(
+                            brand_id=self.brand_id,
+                            profile_version=self.profile_version,
+                            fact_type="product_service",
+                            fact_value={"name": h_clean, "page_title": p.title, "url": p.final_url},
+                            source_page_id=p.id,
+                            source_url=p.final_url,
+                            evidence_snippet=f"Heading '{h_clean}' on {p.page_type} page ({p.final_url})",
+                            extraction_method="heading_heuristic",
+                            confidence=0.80 if p.page_type == "product_service" else 0.70,
+                            user_confirmed=False
+                        ))
 
             # Extract features from bullet points under Feature headings
             lines = (p.extracted_text or "").splitlines()
@@ -360,8 +359,13 @@ class FactSynthesizer:
 
             # Search text for tier plans and prices
             text = p.extracted_text or ""
+            seen_price_texts = set()
             price_matches = PRICE_CURRENCY_REGEX.finditer(text)
             for pm in price_matches:
+                p_text = pm.group(0).strip()
+                if p_text in seen_price_texts:
+                    continue
+                seen_price_texts.add(p_text)
                 snippet_start = max(0, pm.start() - 40)
                 snippet_end = min(len(text), pm.end() + 40)
                 snippet = text[snippet_start:snippet_end].replace("\n", " ").strip()
@@ -369,7 +373,7 @@ class FactSynthesizer:
                     brand_id=self.brand_id,
                     profile_version=self.profile_version,
                     fact_type="pricing",
-                    fact_value={"price_text": pm.group(0).strip(), "context": snippet},
+                    fact_value={"price_text": p_text, "context": snippet},
                     source_page_id=p.id,
                     source_url=p.final_url,
                     evidence_snippet=snippet,
@@ -380,6 +384,7 @@ class FactSynthesizer:
 
     def _extract_contact_info(self, pages: List[CrawledPage], facts: List[BrandFact]) -> None:
         seen_emails = set()
+        seen_socials = set()
         for p in pages:
             text = p.extracted_text or ""
             emails = EMAIL_REGEX.findall(text)
@@ -403,7 +408,8 @@ class FactSynthesizer:
             # External links for social media profiles
             for ext in (p.external_links or []):
                 for platform in ("twitter.com", "x.com", "linkedin.com", "github.com", "youtube.com"):
-                    if platform in ext.lower() and "/share" not in ext.lower():
+                    if platform in ext.lower() and "/share" not in ext.lower() and "/intent" not in ext.lower() and ext not in seen_socials:
+                        seen_socials.add(ext)
                         facts.append(BrandFact(
                             brand_id=self.brand_id,
                             profile_version=self.profile_version,

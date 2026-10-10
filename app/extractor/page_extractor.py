@@ -40,7 +40,15 @@ def extract_page_content(
     error_details = None
     if not plain_text and http_status == 200:
         extraction_status = "partial"
-        error_details = "Extracted readable text was empty or minimal."
+        lower_html = html.lower() if html else ""
+        title_lower = (meta_info.get("title") or "").lower()
+        if (
+            any(marker in lower_html for marker in ('id="__next"', 'id="root"', 'id="app"', 'role="dialog"', 'type="password"'))
+            or any(term in title_lower for term in ("login", "sign in", "auth"))
+        ):
+            error_details = "Page appears to be a client-rendered single-page app or authentication portal with minimal static text content."
+        else:
+            error_details = "Extracted readable text was empty or minimal."
     elif http_status >= 400:
         extraction_status = "failed"
         error_details = f"HTTP Error {http_status}"

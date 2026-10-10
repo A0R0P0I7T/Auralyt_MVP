@@ -57,6 +57,33 @@ def safe_browser_setup(page) -> None:
         logger.debug(f"Could not attach route interceptor: {e}")
 
 
+def extract_html_from_response(response) -> str:
+    """
+    Safely extract decoded HTML string from Scrapling Response or test mock response.
+    Handles Scrapling toolbelt Response (body bytes and encoding), html_content,
+    and fallback text strings.
+    """
+    body = getattr(response, "body", None)
+    if isinstance(body, bytes) and body:
+        encoding = getattr(response, "encoding", "utf-8") or "utf-8"
+        try:
+            return body.decode(encoding, errors="replace")
+        except Exception:
+            return body.decode("utf-8", errors="replace")
+
+    html_content = getattr(response, "html_content", None)
+    if isinstance(html_content, str) and html_content:
+        return html_content
+
+    text = getattr(response, "text", None)
+    if text:
+        text_str = str(text)
+        if text_str.strip():
+            return text_str
+
+    return ""
+
+
 class CrawlItem:
     def __init__(self, url: str, depth: int = 0, priority: int = 2):
         self.url = url
@@ -266,7 +293,7 @@ class ScraplingCrawler:
                             await asyncio.sleep(backoff)
                             backoff *= 2
                             continue
-                        html = final_response.text or ""
+                        html = extract_html_from_response(final_response)
                         return extract_page_content(
                             html=html,
                             requested_url=start_url,
@@ -276,7 +303,7 @@ class ScraplingCrawler:
                             used_js=False
                         )
 
-                    html = final_response.text or ""
+                    html = extract_html_from_response(final_response)
                     # Enforce decompressed text limit
                     if len(html.encode("utf-8", errors="ignore")) > settings.MAX_RESPONSE_SIZE_BYTES:
                         self.warnings.append(
@@ -298,12 +325,12 @@ class ScraplingCrawler:
                                 timeout_ms=settings.REQUEST_TIMEOUT_SECONDS * 1000,
                                 page_setup=safe_browser_setup
                             )
-                            if dynamic_res and dynamic_res.text:
-                                rendered_text = dynamic_res.text
-                                if len(rendered_text.encode("utf-8", errors="ignore")) <= settings.MAX_RESPONSE_SIZE_BYTES:
+                            if dynamic_res:
+                                rendered_text = extract_html_from_response(dynamic_res)
+                                if rendered_text and len(rendered_text.encode("utf-8", errors="ignore")) <= settings.MAX_RESPONSE_SIZE_BYTES:
                                     html = rendered_text
                                     used_js = True
-                                else:
+                                elif len(rendered_text.encode("utf-8", errors="ignore")) > settings.MAX_RESPONSE_SIZE_BYTES:
                                     self.warnings.append(f"Dynamic render exceeded maximum size limit for {final_url}")
                         except Exception as de:
                             logger.debug(f"DynamicFetcher fallback skipped/failed: {de}")
