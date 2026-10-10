@@ -7,7 +7,6 @@ import logging
 import time
 from typing import Dict, List, Set, Optional, Callable, Awaitable
 from urllib.parse import urlparse, urljoin
-from scrapling import AsyncFetcher, DynamicFetcher
 from app.core.config import settings
 from app.crawler.security import (
     validate_and_resolve_url,

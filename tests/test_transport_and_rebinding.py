@@ -268,3 +268,110 @@ async def test_legitimate_https_request_through_safe_proxy():
             assert "Example Domain" in resp.text
     finally:
         await proxy.stop()
+
+
+@pytest.mark.asyncio
+async def test_proxy_blocks_bracketed_ipv6_loopback():
+    """
+    Test that SafeEgressProxy cleanly handles bracketed IPv6 CONNECT requests
+    (e.g., [::1]:443) and rejects them with 403 Forbidden rather than 400 Bad Request.
+    """
+    proxy = SafeEgressProxy()
+    proxy_url = await proxy.start()
+
+    try:
+        reader, writer = await asyncio.open_connection(proxy.host, proxy.assigned_port)
+        connect_req = (
+            b"CONNECT [::1]:443 HTTP/1.1\r\n"
+            b"Host: [::1]:443\r\n"
+            b"User-Agent: test\r\n\r\n"
+        )
+        writer.write(connect_req)
+        await writer.drain()
+
+        resp_line = await reader.readline()
+        assert b"403 Forbidden" in resp_line
+        body = await reader.read(1024)
+        assert b"SSRF Prohibited" in body
+        writer.close()
+        await writer.wait_closed()
+    finally:
+        await proxy.stop()
+
+
+@pytest.mark.asyncio
+async def test_proxy_blocks_ipv6_unique_local_address():
+    """
+    Test that SafeEgressProxy rejects IPv6 Unique Local Addresses (e.g. fd00:ec2::254 / AWS IMDS IPv6)
+    with 403 Forbidden at the proxy connection layer.
+    """
+    proxy = SafeEgressProxy()
+    proxy_url = await proxy.start()
+
+    try:
+        reader, writer = await asyncio.open_connection(proxy.host, proxy.assigned_port)
+        connect_req = (
+            b"CONNECT [fd00:ec2::254]:443 HTTP/1.1\r\n"
+            b"Host: [fd00:ec2::254]:443\r\n\r\n"
+        )
+        writer.write(connect_req)
+        await writer.drain()
+
+        resp_line = await reader.readline()
+        assert b"403 Forbidden" in resp_line
+        body = await reader.read(1024)
+        assert b"SSRF Prohibited" in body
+        writer.close()
+        await writer.wait_closed()
+    finally:
+        await proxy.stop()
+
+
+@pytest.mark.asyncio
+async def test_proxy_strips_proxy_authorization_headers():
+    """
+    Test that SafeEgressProxy strips hop-by-hop headers (Proxy-Authorization, Proxy-Connection)
+    during plain HTTP forwarding to prevent leaking proxy credentials to untrusted destinations.
+    """
+    proxy = SafeEgressProxy()
+    proxy_url = await proxy.start()
+
+    try:
+        from unittest.mock import AsyncMock
+        mock_target_writer = MagicMock()
+        mock_target_writer.drain = AsyncMock()
+        mock_target_writer.wait_closed = AsyncMock()
+        mock_target_reader = MagicMock()
+        mock_target_reader.at_eof.return_value = True
+        mock_target_reader.read = AsyncMock(return_value=b"")
+
+        public_addrinfo = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))
+        ]
+
+        with patch("socket.getaddrinfo", return_value=public_addrinfo), \
+             patch.object(proxy, "_open_target_connection", AsyncMock(return_value=(mock_target_reader, mock_target_writer))):
+            reader, writer = await asyncio.open_connection(proxy.host, proxy.assigned_port)
+            http_req = (
+                b"GET http://example.com/api HTTP/1.1\r\n"
+                b"Host: example.com\r\n"
+                b"User-Agent: SafeCrawler/1.0\r\n"
+                b"Proxy-Authorization: Basic secret_proxy_credentials\r\n"
+                b"Proxy-Connection: keep-alive\r\n\r\n"
+            )
+            writer.write(http_req)
+            await writer.drain()
+
+            await asyncio.sleep(0.1)
+            writer.close()
+            await writer.wait_closed()
+
+            # Verify mock_target_writer was written to
+            written_bytes = b"".join(call.args[0] for call in mock_target_writer.write.call_args_list if call.args)
+            assert b"User-Agent: SafeCrawler/1.0" in written_bytes
+            assert b"Proxy-Authorization" not in written_bytes
+            assert b"secret_proxy_credentials" not in written_bytes
+            assert b"Proxy-Connection" not in written_bytes
+    finally:
+        await proxy.stop()
+

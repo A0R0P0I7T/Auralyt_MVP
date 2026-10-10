@@ -146,3 +146,68 @@ In Pass 2, DNS-to-connection pinning and headless browser network isolation were
 - **Total Tests Passing**: **48 / 48** (100% pass rate in 1.61s).
 - **Zero regressions** against existing onboarding, crawling, extraction, provenance, and human verification capabilities.
 
+---
+
+## 6. Phase 4: Final Security Verification, Functional Regression Check & API Freeze (October 10, 2026)
+
+### A. Audit Scope & Commit Baseline
+- **Starting Commit**: `309a49b` (`fix(security): remediate DNS rebinding via egress proxy and isolate browser execution path`)
+- **Final Commit**: See Git commit history for final hash.
+- **Scope**: Rigorous audit of connection-time egress enforcement, Playwright sandbox isolation, functional crawling preservation, and freezing the Engine 1 API contract for Engine 2.
+
+### B. Confirmed Defects & Remediations
+1. **Bracketed IPv6 Parsing in `SafeEgressProxy._handle_connect`**:
+   - *Defect*: HTTP clients issuing `CONNECT [::1]:443 HTTP/1.1` caused `target.split(":", 1)` to split at the first colon, resulting in `host_str="["` and `port_str=":1]:443"`. Calling `int(port_str)` raised a `ValueError`, causing the proxy to return `400 Bad Request` rather than routing through destination IP validation.
+   - *Fix*: Implemented RFC-compliant authority parsing detecting `target.startswith("[") and "]" in target`, extracting the enclosed IPv6 host and port. In `_validate_destination`, surrounding square brackets are stripped before `BLOCKED_HOSTNAMES` lookup and DNS/IP validation.
+   - *Verification*: Verified by `tests/test_transport_and_rebinding.py::test_proxy_blocks_bracketed_ipv6_loopback` and `test_proxy_blocks_ipv6_unique_local_address`.
+
+2. **Hop-by-Hop & Proxy Credential Header Leakage**:
+   - *Defect*: During plain HTTP proxy forwarding, client headers were written directly to the target server without filtering. Forwarding `Proxy-Authorization` headers to untrusted origin servers leaks proxy authentication credentials.
+   - *Fix*: Stripped all hop-by-hop headers (`Proxy-Authorization`, `Proxy-Authenticate`, `Proxy-Connection`, `Connection`, `Keep-Alive`, `TE`, `Trailers`, `Transfer-Encoding`, `Upgrade`) before transmitting headers to the destination server.
+   - *Verification*: Verified by `tests/test_transport_and_rebinding.py::test_proxy_strips_proxy_authorization_headers`.
+
+3. **Socket Descriptor Cleanup in Proxy Bi-Directional Forwarding**:
+   - *Defect*: In `_pipe_bidirectional`, closing streams did not await `destination.wait_closed()`, leaving socket file descriptors open during high-throughput workloads.
+   - *Fix*: Added `try: await destination.wait_closed() except Exception: pass` to ensure complete socket release.
+
+4. **Unused Scrapling Imports in `app/crawler/engine.py`**:
+   - *Defect*: Legacy `AsyncFetcher, DynamicFetcher` imports remained in `engine.py`, posing a risk of future developers bypassing `safe_fetch_scrapling` and `safe_fetch_dynamic`.
+   - *Fix*: Removed unused imports and confirmed all outbound fetches pass through `app/crawler/transport.py`.
+
+### C. Standardized Security Verification Matrix
+
+| Security Claim / Mechanism | Verification Status | Evidence / Notes |
+| :--- | :--- | :--- |
+| **DNS-to-Connection Pinning (Rebinding)** | `VERIFIED — INTEGRATION` | In-process & container proxy establishes TCP connection directly to validated IP. Rebinding attacks blocked with HTTP 403. |
+| **Cloud Metadata Protection (IPv4 & IPv6)** | `VERIFIED — INTEGRATION` | `169.254.169.254` and `fd00:ec2::254` blocked by proxy with HTTP 403. |
+| **Bracketed IPv6 Authority SSRF** | `VERIFIED — INTEGRATION` | `CONNECT [::1]:443` and `CONNECT [fd00:ec2::254]:443` blocked with HTTP 403. |
+| **Proxy Credential Header Stripping** | `VERIFIED — UNIT` | Hop-by-hop and `Proxy-Authorization` headers stripped before forwarding upstream. |
+| **Production Fail-Closed Validation** | `VERIFIED — UNIT` | Missing `EGRESS_PROXY_URL` in production fails closed at application boot. |
+| **Browser Execution Sandboxing** | `VERIFIED — UNIT` | `ALLOW_BROWSER_FALLBACK=False` by default; route interception aborts WebSockets, media streams, and non-HTTP schemes. |
+| **Container Network Isolation Architecture** | `VERIFIED — DEPLOYMENT` | Docker Compose defines `internal: true` bridge network without internet gateway. All egress forced through Squid proxy. |
+| **Cloud Provider VPC Firewall / IMDS Hop Limits** | `UNVERIFIED` | Requires cloud provider deployment environment (e.g. AWS IMDSv2 `http-put-response-hop-limit=1` and egress security groups). |
+
+### D. Engine 1 API Contract Freeze for Engine 2
+
+The endpoint `GET /api/brands/{brand_id}/profile` is frozen for consumption by Engine 2:
+
+- **Authentication & Authorization**: Currently open in MVP; accepts `brand_id` UUID path parameter.
+- **Contract Schema**: Guaranteed `ProfileSummaryResponse` schema:
+  - `brand`: Object (`id`, `domain`, `business_name`, `industry`, `target_market`, `language`, `created_at`, `updated_at`).
+  - `active_run`: Optional Object (`id`, `status`, `pages_discovered`, `pages_succeeded`, `pages_failed`, `error_summary`, `started_at`, `completed_at`).
+  - `profile_version`: Integer (starts at 1, increments monotonically on refresh).
+  - Synthesized Sections: `business_overview`, `products_and_services`, `target_audience`, `use_cases`, `pricing_information`, `differentiators`, `faqs`, `contact_and_company_info`, `supported_languages`.
+  - `facts`: Array of `BrandFactResponse` objects, each containing:
+    - `id`, `fact_type`, `fact_value` (structured JSON), `confidence` (float 0.0-1.0), `user_confirmed` (bool), `source_url` (sanitized URL), `evidence_snippet` (provenance quote text), `created_at`, `updated_at`.
+  - Data Quality: `coverage_summary` (dict), `verification_progress` (dict with `total_facts`, `confirmed_facts`, `completion_percentage`).
+- **Empty-Profile Behavior**: Returns HTTP 200 with empty lists/dicts when brand has zero facts (does NOT fail or return null).
+- **Error Behavior**: Returns HTTP 404 with `{"detail": "Brand not found."}` if `brand_id` does not exist.
+- **Fact Preservation**: User-confirmed facts (`user_confirmed=True`) are preserved across profile refresh runs and never overwritten by automated extraction.
+- **Engine 2 Boundaries**: Engine 2 must NOT assume real-time web access during query synthesis; it must consume the frozen profile and verified facts generated by Engine 1.
+
+### E. Final Verification Summary
+- **Tests Executed**: **54 / 54** tests passed (100% pass rate in 5.23s).
+- **Database Migrations**: Alembic at `3ef2a22870cc (head)`.
+- **Readiness Verdict**: **`READY FOR ENGINE 2`** (Production deployment requires external proxy and VPC network security groups configured as specified).
+
+

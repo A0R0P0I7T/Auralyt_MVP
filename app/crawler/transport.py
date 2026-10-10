@@ -77,6 +77,13 @@ class SafeEgressProxy:
             raise RuntimeError("SafeEgressProxy is not running.")
         return f"http://{self.host}:{self.assigned_port}"
 
+    async def _open_target_connection(self, ip: str, port: int) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """Establish a direct TCP socket connection to the connection-time validated IP."""
+        return await asyncio.wait_for(
+            asyncio.open_connection(ip, port),
+            timeout=settings.REQUEST_TIMEOUT_SECONDS
+        )
+
     async def _handle_client(
         self,
         client_reader: asyncio.StreamReader,
@@ -121,9 +128,18 @@ class SafeEgressProxy:
         target: str
     ) -> None:
         """Handle HTTPS CONNECT tunnel with connection-time DNS & IP verification."""
+        # Robust authority parsing (supports [ipv6]:port and host:port)
         try:
-            if ":" in target:
-                host_str, port_str = target.split(":", 1)
+            if target.startswith("[") and "]" in target:
+                bracket_end = target.rfind("]")
+                host_str = target[1:bracket_end]
+                rest = target[bracket_end + 1:]
+                if rest.startswith(":"):
+                    port = int(rest[1:])
+                else:
+                    port = 443
+            elif ":" in target:
+                host_str, port_str = target.rsplit(":", 1)
                 port = int(port_str)
             else:
                 host_str = target
@@ -157,10 +173,7 @@ class SafeEgressProxy:
 
         # Connect directly to the validated IP to prevent DNS rebinding
         try:
-            target_reader, target_writer = await asyncio.wait_for(
-                asyncio.open_connection(target_ip, port),
-                timeout=settings.REQUEST_TIMEOUT_SECONDS
-            )
+            target_reader, target_writer = await self._open_target_connection(target_ip, port)
         except Exception as conn_err:
             logger.warning(f"Failed to connect to {target_ip}:{port}: {conn_err}")
             client_writer.write(b"HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n")
@@ -211,15 +224,34 @@ class SafeEgressProxy:
             return
 
         try:
-            target_reader, target_writer = await asyncio.wait_for(
-                asyncio.open_connection(target_ip, port),
-                timeout=settings.REQUEST_TIMEOUT_SECONDS
-            )
+            target_reader, target_writer = await self._open_target_connection(target_ip, port)
         except Exception as conn_err:
             logger.warning(f"Failed to connect to {target_ip}:{port}: {conn_err}")
             client_writer.write(b"HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n")
             await client_writer.drain()
             return
+
+        # Strip hop-by-hop & proxy credential headers to avoid credential leakage to upstream
+        hop_by_hop = {
+            "proxy-connection",
+            "proxy-authorization",
+            "proxy-authenticate",
+            "connection",
+            "keep-alive",
+            "te",
+            "trailers",
+            "transfer-encoding",
+            "upgrade",
+        }
+        filtered_headers = []
+        for h in headers:
+            h_str = h.decode("latin1", errors="ignore")
+            colon_idx = h_str.find(":")
+            if colon_idx != -1:
+                h_name = h_str[:colon_idx].strip().lower()
+                if h_name in hop_by_hop:
+                    continue
+            filtered_headers.append(h)
 
         # Rewrite request line with relative path
         rel_path = parsed.path or "/"
@@ -227,7 +259,7 @@ class SafeEgressProxy:
             rel_path += f"?{parsed.query}"
         http_version = parts[2] if len(parts) > 2 else "HTTP/1.1"
         target_writer.write(f"{method} {rel_path} {http_version}\r\n".encode("utf-8"))
-        for h in headers:
+        for h in filtered_headers:
             target_writer.write(h)
         target_writer.write(b"\r\n")
         await target_writer.drain()
@@ -243,6 +275,8 @@ class SafeEgressProxy:
             return False, f"Port {port} is not permitted. Only {sorted(list(ALLOWED_PORTS))} allowed.", None
 
         clean_host = unquote(host).lower().strip().rstrip(".")
+        if clean_host.startswith("[") and clean_host.endswith("]"):
+            clean_host = clean_host[1:-1]
         if not clean_host:
             return False, "Missing destination hostname.", None
 
@@ -292,6 +326,7 @@ class SafeEgressProxy:
             finally:
                 try:
                     destination.close()
+                    await destination.wait_closed()
                 except Exception:
                     pass
 

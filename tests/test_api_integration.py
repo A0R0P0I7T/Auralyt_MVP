@@ -155,3 +155,123 @@ async def test_create_brand_fact_rejects_malicious_source_url(client: AsyncClien
     })
     assert res_file.status_code == 400
 
+
+@pytest.mark.asyncio
+async def test_brand_profile_contract_freeze_schema(client: AsyncClient, test_db_session):
+    """
+    Contract Freeze Test: Verifies that GET /api/brands/{brand_id}/profile adheres
+    strictly to the ProfileSummaryResponse schema required by Engine 2.
+    """
+    brand = Brand(
+        domain="contract-test.com",
+        business_name="Contract Test Corp",
+        industry="SaaS",
+        target_market="Enterprise",
+        language="en",
+        profile_version=1
+    )
+    test_db_session.add(brand)
+    await test_db_session.flush()
+
+    run = ProfileRun(
+        brand_id=brand.id,
+        status="completed",
+        page_limit=10,
+        pages_discovered=10,
+        pages_succeeded=5
+    )
+    test_db_session.add(run)
+    await test_db_session.flush()
+
+    fact1 = BrandFact(
+        brand_id=brand.id,
+        profile_version=1,
+        fact_type="business_overview",
+        fact_value={"description": "AI Visibility Intelligence Platform"},
+        confidence=0.95,
+        user_confirmed=True,
+        source_url="https://contract-test.com/about",
+        evidence_snippet="AI visibility intelligence platform for modern brands"
+    )
+    fact2 = BrandFact(
+        brand_id=brand.id,
+        profile_version=1,
+        fact_type="product_service",
+        fact_value={"name": "Automated Brand Monitor"},
+        confidence=0.88,
+        user_confirmed=False,
+        source_url="https://contract-test.com/products",
+        evidence_snippet="Real-time automated brand monitoring across generative models"
+    )
+    test_db_session.add_all([fact1, fact2])
+    await test_db_session.commit()
+
+    res = await client.get(f"/api/brands/{brand.id}/profile")
+    assert res.status_code == 200
+    data = res.json()
+
+    # Guaranteed top-level keys
+    guaranteed_keys = [
+        "brand", "active_run", "profile_version", "business_overview",
+        "products_and_services", "target_audience", "use_cases",
+        "pricing_information", "differentiators", "faqs",
+        "contact_and_company_info", "supported_languages",
+        "facts", "coverage_summary", "verification_progress"
+    ]
+    for key in guaranteed_keys:
+        assert key in data, f"Missing guaranteed contract field '{key}' in profile summary"
+
+    # Brand fields
+    assert data["brand"]["id"] == brand.id
+    assert data["brand"]["domain"] == "contract-test.com"
+    assert data["brand"]["business_name"] == "Contract Test Corp"
+
+    # Profile version
+    assert data["profile_version"] == 1
+
+    # Fact structure & provenance
+    assert len(data["facts"]) == 2
+    fact_entry = next(f for f in data["facts"] if f["fact_type"] == "business_overview")
+    assert fact_entry["user_confirmed"] is True
+    assert fact_entry["source_url"] == "https://contract-test.com/about"
+    assert "provenance" in fact_entry or "evidence_snippet" in fact_entry
+
+    # Verification progress counters
+    assert data["verification_progress"]["total_facts"] == 2
+    assert data["verification_progress"]["confirmed_facts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_brand_profile_contract_empty_profile_behavior(client: AsyncClient, test_db_session):
+    """
+    Contract Freeze Test: Brand with no facts returns 200 with empty lists/dicts
+    rather than failing or returning null.
+    """
+    brand = Brand(
+        domain="empty-profile.com",
+        business_name="Empty Profile Inc",
+        profile_version=1
+    )
+    test_db_session.add(brand)
+    await test_db_session.commit()
+
+    res = await client.get(f"/api/brands/{brand.id}/profile")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["facts"] == []
+    assert data["verification_progress"]["total_facts"] == 0
+    assert data["verification_progress"]["confirmed_facts"] == 0
+    assert isinstance(data["products_and_services"], list)
+    assert len(data["products_and_services"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_brand_profile_contract_not_found_404(client: AsyncClient):
+    """
+    Contract Freeze Test: Requesting a non-existent brand returns 404.
+    """
+    res = await client.get("/api/brands/non-existent-uuid/profile")
+    assert res.status_code == 404
+    assert res.json()["detail"] == "Brand not found."
+
+
