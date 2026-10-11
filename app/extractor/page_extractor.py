@@ -29,7 +29,8 @@ def extract_page_content(
     page_type = classify_page_type(
         final_url,
         title=meta_info.get("title"),
-        h1_list=meta_info.get("headings", {}).get("h1", [])
+        h1_list=meta_info.get("headings", {}).get("h1", []),
+        structured_data=meta_info.get("structured_data")
     )
 
     # 4. Extract internal & external links

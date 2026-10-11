@@ -30,21 +30,47 @@ COMMON_SITEMAP_PATHS = [
 HIGH_VALUE_KEYWORDS = [
     "about", "product", "products", "service", "services", "feature", "features",
     "pricing", "price", "plan", "plans", "solution", "solutions", "faq", "contact",
-    "use-case", "use-cases", "case-study", "integrations", "security", "overview"
+    "use-case", "use-cases", "case-study", "integrations", "security", "overview",
+    "t", "shop", "men", "women", "kids", "jordan", "acg", "launch"
 ]
 
 
 def score_url_priority(url: str) -> int:
     """Return priority score: lower number means higher priority."""
     url_lower = url.lower()
+    # Deprioritize help / support / locator URLs so they don't crowd out core products
+    if any(k in url_lower for k in ("/help", "/support", "/locator", "/store")):
+        return 3
     for kw in HIGH_VALUE_KEYWORDS:
         if f"/{kw}" in url_lower or f"-{kw}" in url_lower:
             return 1
     return 2
 
 
+def score_sitemap_priority(sm_url: str) -> int:
+    sm_l = sm_url.lower()
+    if any(k in sm_l for k in ("landing", "product", "pdp", "article", "stories", "collection", "main", "shop")):
+        return 0
+    if any(k in sm_l for k in ("help", "support", "faq", "locator", "store", "legal")):
+        return 2
+    return 1
+
+
+def score_sub_sitemap_locale(sub_url: str) -> int:
+    sub_l = sub_url.lower()
+    if "en-us" in sub_l or "en_us" in sub_l:
+        return 0
+    if "en-gb" in sub_l or "en_gb" in sub_l:
+        return 1
+    if "-en-" in sub_l or "/en/" in sub_l or "-en." in sub_l:
+        return 2
+    if "us." in sub_l or "-us-" in sub_l or "-us." in sub_l or "/us/" in sub_l:
+        return 3
+    return 4
+
+
 class SitemapDiscoverer:
-    def __init__(self, base_url: str, base_domain: str, max_urls: int = 100, max_sitemap_files: int = 5):
+    def __init__(self, base_url: str, base_domain: str, max_urls: int = 100, max_sitemap_files: int = 15):
         self.base_url = normalize_url(base_url)
         self.base_domain = base_domain.lower()
         self.max_urls = max_urls
@@ -65,6 +91,9 @@ class SitemapDiscoverer:
             if full_path not in candidates and is_same_domain_or_subdomain(full_path, self.base_domain):
                 candidates.append(full_path)
 
+        # Sort candidate sitemaps by priority (products/landing first, help last)
+        candidates.sort(key=score_sitemap_priority)
+
         close_client = False
         if client is None:
             client = await create_safe_httpx_client(timeout=settings.REQUEST_TIMEOUT_SECONDS)
@@ -74,13 +103,17 @@ class SitemapDiscoverer:
         extracted_set: Set[str] = set()
 
         try:
+            # Fair budget per candidate sitemap to prevent a single sitemap from starving the rest
+            per_sm_quota = max(15, self.max_urls // max(1, len(candidates))) if len(candidates) > 1 else self.max_urls
+
             for sm_url in candidates:
                 if self.sitemaps_processed >= self.max_sitemap_files or len(extracted_set) >= self.max_urls:
                     break
                 if sm_url in visited_sitemaps:
                     continue
 
-                await self._process_sitemap(sm_url, visited_sitemaps, extracted_set, client)
+                target_limit = min(self.max_urls, len(extracted_set) + per_sm_quota)
+                await self._process_sitemap(sm_url, visited_sitemaps, extracted_set, client, target_limit=target_limit)
 
             if not extracted_set and not self.warnings:
                 self.warnings.append("No accessible or valid sitemaps found.")
@@ -99,9 +132,11 @@ class SitemapDiscoverer:
         sm_url: str,
         visited: Set[str],
         extracted: Set[str],
-        client: httpx.AsyncClient
+        client: httpx.AsyncClient,
+        target_limit: Optional[int] = None
     ) -> None:
-        if self.sitemaps_processed >= self.max_sitemap_files or sm_url in visited:
+        effective_limit = target_limit if target_limit is not None else self.max_urls
+        if self.sitemaps_processed >= self.max_sitemap_files or sm_url in visited or len(extracted) >= effective_limit:
             return
 
         visited.add(sm_url)
@@ -209,10 +244,13 @@ class SitemapDiscoverer:
                                 else:
                                     logger.warning(f"Ignoring out-of-scope sub-sitemap: {sub_loc}")
 
+                # Sort sub-sitemaps by locale priority (English/US first)
+                sub_sitemaps.sort(key=score_sub_sitemap_locale)
+
                 for sub_sm in sub_sitemaps:
-                    if len(extracted) >= self.max_urls or self.sitemaps_processed >= self.max_sitemap_files:
+                    if len(extracted) >= effective_limit or self.sitemaps_processed >= self.max_sitemap_files:
                         break
-                    await self._process_sitemap(sub_sm, visited, extracted, client)
+                    await self._process_sitemap(sub_sm, visited, extracted, client, target_limit=target_limit)
 
             # Handle Standard Urlset (<urlset>)
             elif "urlset" in tag:
@@ -226,8 +264,9 @@ class SitemapDiscoverer:
                                     validate_and_resolve_url(raw_loc)
                                     norm = normalize_url(raw_loc)
                                     if is_same_domain_or_subdomain(norm, self.base_domain):
-                                        extracted.add(norm)
-                                        if len(extracted) >= self.max_urls:
+                                        if norm not in extracted:
+                                            extracted.add(norm)
+                                        if len(extracted) >= effective_limit:
                                             return
                                 except Exception:
                                     continue

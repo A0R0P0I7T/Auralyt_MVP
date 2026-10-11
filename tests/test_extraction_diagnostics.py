@@ -110,3 +110,193 @@ def test_spa_auth_portal_diagnostic_status():
 
     assert page_data["extraction_status"] == "partial"
     assert "client-rendered single-page app or authentication portal" in page_data["error_details"]
+
+
+def test_boilerplate_headings_excluded_from_metadata():
+    """Verify that headings inside header, footer, nav, and boilerplate containers are stripped."""
+    html = """
+    <!doctype html>
+    <html>
+    <head><title>Nike Official Store</title></head>
+    <body>
+        <header>
+            <div id="header-search">
+                <a href="/help"><h1>GET HELP</h1></a>
+            </div>
+        </header>
+        <main>
+            <h1>Nike Air Max 90</h1>
+            <h2>Iconic Cushioning</h2>
+            <p>The Nike Air Max 90 stays true to its OG running roots.</p>
+        </main>
+        <footer>
+            <div class="footer-links">
+                <h2>Africa</h2>
+                <h2>Americas</h2>
+                <h2>Asia Pacific</h2>
+                <h2>Europe</h2>
+                <h2>Middle East</h2>
+            </div>
+        </footer>
+    </body>
+    </html>
+    """
+    from app.extractor.metadata import extract_metadata_and_structured_data
+    meta = extract_metadata_and_structured_data(html, "https://www.nike.com/t/air-max-90")
+
+    h1_list = meta["headings"]["h1"]
+    h2_list = meta["headings"]["h2"]
+
+    # Main content headings must be retained
+    assert "Nike Air Max 90" in h1_list
+    assert "Iconic Cushioning" in h2_list
+
+    # Boilerplate headings must be excluded
+    assert "GET HELP" not in h1_list
+    assert "Africa" not in h2_list
+    assert "Americas" not in h2_list
+    assert "Europe" not in h2_list
+    assert "Middle East" not in h2_list
+
+
+def test_page_classification_hierarchy_faq_vs_product():
+    """Verify that help/FAQ pages are prioritized over generic product keyword matching."""
+    from app.extractor.page_classifier import classify_page_type
+
+    # Help article containing 'product' in path
+    assert classify_page_type("https://www.nike.com/help/a/product-discount", title="Product Discounts | Nike Help") == "faq"
+    assert classify_page_type("https://www.nike.com/help/a/find-product", title="Find a Product | Nike Help") == "faq"
+    assert classify_page_type("https://www.nike.com/help", title="Nike Customer Service") == "faq"
+
+    # E-commerce PDP paths
+    assert classify_page_type("https://www.nike.com/t/24-7-womens-shoes-j9v0Ciab", title="Nike 24.7 Women's Shoes") == "product_service"
+    assert classify_page_type("https://www.nike.com/products/running-shoe", title="Running Shoe") == "product_service"
+
+    # Structured data hinting product
+    sd_product = [{"@type": "ProductGroup", "name": "Running Shoes"}]
+    assert classify_page_type("https://www.nike.com/shoes/group", title="Shoes", structured_data=sd_product) == "product_service"
+
+
+def test_disallowed_product_labels_filtered_out():
+    """Verify that generic UI, region, and interface terms are never synthesized as products."""
+    page = CrawledPage(
+        brand_id="nike-brand",
+        profile_run_id="run-1",
+        requested_url="https://www.nike.com/t/air-zoom",
+        final_url="https://www.nike.com/t/air-zoom",
+        http_status=200,
+        title="Nike Air Zoom",
+        meta_description="Lightweight speed.",
+        headings={
+            "h1": ["Nike Air Zoom Pegasus", "GET HELP"],
+            "h2": ["Running Shoe", "Africa", "Americas", "Asia Pacific", "Europe", "Middle East", "Privacy Policy"]
+        },
+        extracted_text="Designed for speed and comfort.",
+        structured_data=[],
+        page_type="product_service",
+        content_hash="hash123"
+    )
+
+    synth = FactSynthesizer("nike-brand", user_business_name="Nike")
+    facts = synth.synthesize_facts([page])
+
+    product_names = [f.fact_value.get("name") for f in facts if f.fact_type == "product_service"]
+
+    # Legitimate product retained
+    assert "Nike Air Zoom Pegasus" in product_names
+    assert "Running Shoe" in product_names
+
+    # Irrelevant labels excluded
+    assert "GET HELP" not in product_names
+    assert "Africa" not in product_names
+    assert "Americas" not in product_names
+    assert "Asia Pacific" not in product_names
+    assert "Europe" not in product_names
+    assert "Middle East" not in product_names
+    assert "Privacy Policy" not in product_names
+
+
+def test_structured_data_product_group_and_variant_pricing():
+    """Verify ProductGroup structured data extracts products, audience, and variant offers."""
+    structured_data = [
+        {
+            "@type": "ProductGroup",
+            "name": "Nike Invincible 3",
+            "description": "Max cushioning running shoe designed for runners.",
+            "audience": {
+                "@type": "PeopleAudience",
+                "suggestedGender": "https://schema.org/Unisex",
+                "suggestedMinAge": 16
+            },
+            "hasVariant": [
+                {
+                    "@type": "Product",
+                    "name": "Nike Invincible 3 - White",
+                    "offers": {
+                        "@type": "Offer",
+                        "price": 180,
+                        "priceCurrency": "USD"
+                    }
+                }
+            ]
+        }
+    ]
+
+    page = CrawledPage(
+        brand_id="nike-brand",
+        profile_run_id="run-1",
+        requested_url="https://www.nike.com/t/invincible-3",
+        final_url="https://www.nike.com/t/invincible-3",
+        http_status=200,
+        title="Nike Invincible 3",
+        meta_description="Max cushioning.",
+        headings={"h1": [], "h2": []},
+        extracted_text="The ultimate cushioned ride.",
+        structured_data=structured_data,
+        page_type="product_service",
+        content_hash="hash456"
+    )
+
+    synth = FactSynthesizer("nike-brand", user_business_name="Nike")
+    facts = synth.synthesize_facts([page])
+
+    fact_types = {f.fact_type for f in facts}
+    assert "product_service" in fact_types
+    assert "target_audience" in fact_types
+    assert "pricing" in fact_types
+
+    pricing_fact = next(f for f in facts if f.fact_type == "pricing")
+    assert pricing_fact.fact_value["price"] == "180"
+    assert pricing_fact.fact_value["currency"] == "USD"
+
+    audience_fact = next(f for f in facts if f.fact_type == "target_audience")
+    assert "Unisex" in audience_fact.fact_value
+    assert "16+" in audience_fact.fact_value
+
+
+def test_faq_facts_extracted_from_faq_pages():
+    """Verify FAQ extraction from pages classified as faq."""
+    page = CrawledPage(
+        brand_id="nike-brand",
+        profile_run_id="run-1",
+        requested_url="https://www.nike.com/help/a/student-discount",
+        final_url="https://www.nike.com/help/a/student-discount",
+        http_status=200,
+        title="Does Nike Offer a Student Discount? | Nike Help",
+        meta_description="Eligible students can get 10% off most Nike items once verified.",
+        headings={"h1": ["Does Nike Offer a Student Discount?"], "h2": []},
+        extracted_text="Eligible students can get 10% off most Nike items once verified.",
+        structured_data=[],
+        page_type="faq",
+        content_hash="hash789"
+    )
+
+    synth = FactSynthesizer("nike-brand", user_business_name="Nike")
+    facts = synth.synthesize_facts([page])
+
+    faq_facts = [f for f in facts if f.fact_type == "faq"]
+    assert len(faq_facts) == 1
+    assert faq_facts[0].fact_value["question"] == "Does Nike Offer a Student Discount?"
+    assert "10% off" in faq_facts[0].fact_value["answer"]
+    assert faq_facts[0].source_url == "https://www.nike.com/help/a/student-discount"
+

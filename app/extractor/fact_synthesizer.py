@@ -13,6 +13,24 @@ PHONE_REGEX = re.compile(r"(\+?[0-9]{1,3}[-.\s]?)?(\(?\d{3}\)?[-.\s]?)[\d.-]{7,1
 PRICING_TIER_REGEX = re.compile(r"\b(Free|Starter|Basic|Pro|Professional|Growth|Business|Enterprise|Team)\b", re.I)
 PRICE_CURRENCY_REGEX = re.compile(r"(\$|€|£|₹)\s?(\d+(?:,\d{3})*(?:\.\d{2})?)\s?(?:/\s?(?:mo|month|yr|year|user|seat))?", re.I)
 
+DISALLOWED_PRODUCT_NAMES = {
+    # Continents & Regions
+    "africa", "americas", "asia pacific", "europe", "middle east",
+    "north america", "south america", "latin america", "oceania", "antarctica",
+    "united states", "global", "worldwide", "international",
+    # Generic Navigation & Support / Auth Actions
+    "get help", "help", "contact us", "customer service", "sign in", "sign up",
+    "log in", "cart", "bag", "checkout", "view cart", "order status",
+    "shipping & delivery", "returns", "terms of sale", "privacy policy",
+    "cookie settings", "site feedback", "find a store", "become a member",
+    "send us feedback", "about us", "careers", "news", "investors", "sustainability",
+    "menu", "navigation", "footer", "header", "quick links", "company", "explore",
+    "trending now", "shop by category", "featured", "trending", "latest in clothing",
+    "featured footwear", "shop all", "shop", "all products", "categories", "overview",
+    "what we do", "capabilities", "solutions", "all-in-one", "features", "reviews",
+    "specifications", "description", "details", "materials", "size & fit"
+}
+
 
 class FactSynthesizer:
     def __init__(
@@ -126,10 +144,13 @@ class FactSynthesizer:
         # 7. Pricing Information
         self._extract_pricing_facts(pages, facts)
 
-        # 8. Contact & Company Details (Email, phone, social)
+        # 8. FAQs from FAQ/Help pages
+        self._extract_faq_facts(pages, facts)
+
+        # 9. Contact & Company Details (Email, phone, social)
         self._extract_contact_info(pages, facts)
 
-        # 9. Supported Languages
+        # 10. Supported Languages
         self._extract_languages(pages, facts)
 
         return facts
@@ -178,9 +199,11 @@ class FactSynthesizer:
                     if desc and isinstance(desc, str) and len(desc.strip()) > 20:
                         return desc.strip(), p, f"JSON-LD description: {desc[:200]}...", "json_ld_schema", 0.95
 
-        # 2. From homepage meta_description
+        # 2. From homepage meta_description (only if true homepage or not support/customer service)
         if homepage.meta_description and len(homepage.meta_description.strip()) > 20:
-            return homepage.meta_description.strip(), homepage, f"Meta description: {homepage.meta_description[:200]}...", "meta_description", 0.90
+            h_desc_lower = homepage.meta_description.lower()
+            if not any(g in h_desc_lower for g in ("customer service", "help center", "get help")) and homepage.page_type not in ("faq", "contact"):
+                return homepage.meta_description.strip(), homepage, f"Meta description: {homepage.meta_description[:200]}...", "meta_description", 0.90
 
         # 3. From About page
         about_page = next((p for p in pages if p.page_type == "about"), None)
@@ -190,10 +213,17 @@ class FactSynthesizer:
                 return first_para, about_page, f"About page excerpt: {first_para[:200]}...", "content_heuristic", 0.80
 
         # 4. From Homepage first paragraph
-        if homepage.extracted_text:
+        if homepage.page_type == "homepage" and homepage.extracted_text:
             paras = [p.strip() for p in homepage.extracted_text.split("\n\n") if len(p.strip()) > 40]
             if paras:
                 return paras[0], homepage, f"Homepage hero text: {paras[0][:200]}...", "content_heuristic", 0.70
+
+        # 5. From general brand storefront/landing pages (non-support, non-contact)
+        for p in pages:
+            if p.page_type not in ("faq", "contact") and p.meta_description and len(p.meta_description.strip()) > 25:
+                p_desc_lower = p.meta_description.lower()
+                if not any(g in p_desc_lower for g in ("customer service", "help center", "get help")):
+                    return p.meta_description.strip(), p, f"Landing page description: {p.meta_description[:200]}...", "meta_description", 0.75
 
         return None, None, None, "none", 0.0
 
@@ -204,8 +234,8 @@ class FactSynthesizer:
                 if not stype:
                     continue
 
-                # Products / Services
-                if stype in ("Product", "Service", "SoftwareApplication"):
+                # Products / Services / ProductGroups
+                if stype in ("Product", "ProductGroup", "IndividualProduct", "ProductModel", "SomeProducts", "Service", "SoftwareApplication"):
                     pname = sdata.get("name")
                     if pname and isinstance(pname, str):
                         pdesc = sdata.get("description", "")
@@ -221,6 +251,33 @@ class FactSynthesizer:
                             confidence=0.95,
                             user_confirmed=False
                         ))
+
+                    # Extract target audience if declared in structured data
+                    aud = sdata.get("audience")
+                    if aud:
+                        aud_str = None
+                        if isinstance(aud, dict):
+                            gender = str(aud.get("suggestedGender", "")).split("/")[-1]
+                            min_age = str(aud.get("suggestedMinAge", ""))
+                            aud_type = str(aud.get("audienceType", ""))
+                            parts = [pt for pt in (aud_type, gender, f"age {min_age}+" if min_age else "") if pt]
+                            if parts:
+                                aud_str = ", ".join(parts)
+                        elif isinstance(aud, str):
+                            aud_str = aud.strip()
+                        if aud_str:
+                            facts.append(BrandFact(
+                                brand_id=self.brand_id,
+                                profile_version=self.profile_version,
+                                fact_type="target_audience",
+                                fact_value=aud_str,
+                                source_page_id=p.id,
+                                source_url=p.final_url,
+                                evidence_snippet=f"Structured Data audience: {aud_str}",
+                                extraction_method="json_ld_audience",
+                                confidence=0.90,
+                                user_confirmed=False
+                            ))
 
                 # FAQPage
                 elif stype == "FAQPage":
@@ -252,15 +309,18 @@ class FactSynthesizer:
             if p.page_type in ("product_service", "homepage"):
                 headings = p.headings or {}
                 h1_list = headings.get("h1", [])
-                h2_list = headings.get("h2", [])
+                h2_list = headings.get("h2", []) if p.page_type == "product_service" else []
 
                 for heading in h1_list + h2_list:
                     h_clean = heading.strip()
-                    # Filter out generic words
-                    if any(w in h_clean.lower() for w in ("features", "what we do", "capabilities", "solutions", "all-in-one")):
+                    h_lower = h_clean.lower()
+                    # Filter out disallowed interface, region, navigation, or boilerplate terms
+                    if h_lower in DISALLOWED_PRODUCT_NAMES:
                         continue
-                    if 3 <= len(h_clean) <= 60 and h_clean.lower() not in seen_products:
-                        seen_products.add(h_clean.lower())
+                    if any(bad in h_lower for bad in ("privacy policy", "terms of", "cookie", "get help", "customer service")):
+                        continue
+                    if 3 <= len(h_clean) <= 60 and h_lower not in seen_products:
+                        seen_products.add(h_lower)
                         facts.append(BrandFact(
                             brand_id=self.brand_id,
                             profile_version=self.profile_version,
@@ -335,7 +395,7 @@ class FactSynthesizer:
         target_pages = pricing_pages if pricing_pages else pages
 
         for p in target_pages:
-            # Look for JSON-LD Offers
+            # Look for JSON-LD Offers (direct offers or within hasVariant)
             for sdata in (p.structured_data or []):
                 offers = sdata.get("offers")
                 if offers:
@@ -356,6 +416,27 @@ class FactSynthesizer:
                                 confidence=0.95,
                                 user_confirmed=False
                             ))
+                elif "hasVariant" in sdata and isinstance(sdata["hasVariant"], list):
+                    for var in sdata["hasVariant"]:
+                        if isinstance(var, dict) and "offers" in var:
+                            var_offers = var["offers"] if isinstance(var["offers"], list) else [var["offers"]]
+                            for off in var_offers:
+                                if isinstance(off, dict) and off.get("price"):
+                                    price_val = str(off["price"])
+                                    curr = off.get("priceCurrency", "USD")
+                                    facts.append(BrandFact(
+                                        brand_id=self.brand_id,
+                                        profile_version=self.profile_version,
+                                        fact_type="pricing",
+                                        fact_value={"price": price_val, "currency": curr, "name": var.get("name") or sdata.get("name")},
+                                        source_page_id=p.id,
+                                        source_url=p.final_url,
+                                        evidence_snippet=f"JSON-LD Variant Offer: {curr} {price_val}",
+                                        extraction_method="json_ld_offer",
+                                        confidence=0.95,
+                                        user_confirmed=False
+                                    ))
+                                    break
 
             # Search text for tier plans and prices
             text = p.extracted_text or ""
@@ -381,6 +462,54 @@ class FactSynthesizer:
                     confidence=0.80,
                     user_confirmed=False
                 ))
+
+    def _extract_faq_facts(self, pages: List[CrawledPage], facts: List[BrandFact]) -> None:
+        seen_questions = {
+            f.fact_value.get("question").lower()
+            for f in facts
+            if f.fact_type == "faq" and isinstance(f.fact_value, dict) and "question" in f.fact_value
+        }
+
+        for p in pages:
+            if p.page_type == "faq":
+                # Check if title or H1 has a question
+                candidates = []
+                if p.title:
+                    clean_title = p.title.split("|")[0].split(" - ")[0].split(". Nike.com")[0].strip()
+                    if "?" in clean_title or any(clean_title.lower().startswith(w) for w in ("how ", "what ", "why ", "when ", "can ", "does ", "is ", "where ")):
+                        candidates.append(clean_title)
+                for h1 in (p.headings or {}).get("h1", []):
+                    clean_h1 = h1.strip()
+                    if "?" in clean_h1 or any(clean_h1.lower().startswith(w) for w in ("how ", "what ", "why ", "when ", "can ", "does ", "is ", "where ")):
+                        candidates.append(clean_h1)
+
+                for q in candidates:
+                    q_lower = q.lower()
+                    if q_lower not in seen_questions and 10 <= len(q) <= 120:
+                        # Determine answer: prefer meta_description if non-trivial, or first paragraph of extracted text
+                        ans = None
+                        if p.meta_description and len(p.meta_description.strip()) > 25 and not any(g in p.meta_description.lower() for g in ("customer service. nike.com", "get help")):
+                            ans = p.meta_description.strip()
+                        elif p.extracted_text:
+                            paras = [para.strip() for para in p.extracted_text.split("\n\n") if len(para.strip()) > 30 and not para.strip().lower().startswith("get help")]
+                            if paras:
+                                ans = paras[0]
+
+                        if ans:
+                            seen_questions.add(q_lower)
+                            facts.append(BrandFact(
+                                brand_id=self.brand_id,
+                                profile_version=self.profile_version,
+                                fact_type="faq",
+                                fact_value={"question": q, "answer": ans},
+                                source_page_id=p.id,
+                                source_url=p.final_url,
+                                evidence_snippet=f"FAQ from {p.final_url}: Q: {q} | A: {ans[:150]}",
+                                extraction_method="faq_content_heuristic",
+                                confidence=0.85,
+                                user_confirmed=False
+                            ))
+                            break
 
     def _extract_contact_info(self, pages: List[CrawledPage], facts: List[BrandFact]) -> None:
         seen_emails = set()

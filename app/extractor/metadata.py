@@ -50,15 +50,27 @@ def extract_metadata_and_structured_data(html: str, current_url: str) -> Dict[st
     if not title:
         title = og_data.get("og:title") or og_data.get("twitter:title")
 
-    # Headings
+    # Headings (extract only from clean, non-boilerplate content)
+    from app.extractor.html_cleaner import BOILERPLATE_SELECTORS
+    headings_soup = BeautifulSoup(html, "lxml")
+    for tag_name in ("header", "footer", "nav", "aside", "noscript", "style", "script"):
+        for t in headings_soup.find_all(tag_name):
+            t.decompose()
+    for sel in BOILERPLATE_SELECTORS:
+        try:
+            for el in headings_soup.select(sel):
+                el.decompose()
+        except Exception:
+            pass
+
     h1_list: List[str] = []
-    for h in soup.find_all("h1"):
+    for h in headings_soup.find_all("h1"):
         txt = h.get_text(separator=" ", strip=True)
         if txt and txt not in h1_list:
             h1_list.append(txt)
 
     h2_list: List[str] = []
-    for h in soup.find_all("h2"):
+    for h in headings_soup.find_all("h2"):
         txt = h.get_text(separator=" ", strip=True)
         if txt and txt not in h2_list:
             h2_list.append(txt)
