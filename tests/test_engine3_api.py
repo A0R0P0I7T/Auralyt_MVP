@@ -157,3 +157,128 @@ async def test_list_all_brands(client: AsyncClient, profiled_brand):
     assert isinstance(brands, list)
     assert any(b["id"] == profiled_brand.id for b in brands)
 
+
+@pytest.mark.asyncio
+async def test_scan_idempotency_returns_active_scan(client: AsyncClient, profiled_brand, test_db_session: AsyncSession):
+    """Verify requesting a scan while one is already running/pending reuses the existing scan."""
+    # 1. Create approved prompt
+    p_run = PromptRun(brand_id=profiled_brand.id, profile_version=1, status="completed")
+    test_db_session.add(p_run)
+    await test_db_session.flush()
+
+    cand = PromptCandidate(
+        brand_id=profiled_brand.id,
+        prompt_run_id=p_run.id,
+        profile_version=1,
+        text="What are top issue trackers?",
+        normalized_text="what are top issue trackers",
+        category="discovery",
+        is_approved=True
+    )
+    test_db_session.add(cand)
+    await test_db_session.commit()
+
+    # 2. Start initial scan
+    scan1_res = await client.post(f"/api/brands/{profiled_brand.id}/visibility/scans", json={
+        "provider": "mock",
+        "force_rescan": False
+    })
+    assert scan1_res.status_code == 202
+    scan1_id = scan1_res.json()["id"]
+
+    # 3. Request again without force_rescan - should return existing scan
+    scan2_res = await client.post(f"/api/brands/{profiled_brand.id}/visibility/scans", json={
+        "provider": "mock",
+        "force_rescan": False
+    })
+    assert scan2_res.status_code == 202
+    assert scan2_res.json()["id"] == scan1_id
+
+
+@pytest.mark.asyncio
+async def test_honest_denominators_on_partial_failure(client: AsyncClient, profiled_brand, test_db_session: AsyncSession):
+    """Verify that when queries fail, mention and recommendation rates use total_prompts as denominator."""
+    # Ensure brand matches the mock provider's content
+    profiled_brand.business_name = "Linear"
+    profiled_brand.domain = "linear.app"
+    test_db_session.add(profiled_brand)
+    await test_db_session.commit()
+
+    p_run = PromptRun(brand_id=profiled_brand.id, profile_version=1, status="completed")
+    test_db_session.add(p_run)
+    await test_db_session.flush()
+
+    # Create two approved prompts: one normal, one configured to trigger simulated error
+    cand1 = PromptCandidate(
+        brand_id=profiled_brand.id,
+        prompt_run_id=p_run.id,
+        profile_version=1,
+        text="What is Linear App?",
+        normalized_text="what is linear app",
+        category="discovery",
+        is_approved=True
+    )
+    cand2 = PromptCandidate(
+        brand_id=profiled_brand.id,
+        prompt_run_id=p_run.id,
+        profile_version=1,
+        text="What is the pricing? [SIMULATE_ERROR]",
+        normalized_text="what is the pricing simulate_error",
+        category="pricing",
+        is_approved=True
+    )
+    test_db_session.add_all([cand1, cand2])
+    await test_db_session.commit()
+
+    # Start scan with force_rescan
+    scan_res = await client.post(f"/api/brands/{profiled_brand.id}/visibility/scans", json={
+        "provider": "mock",
+        "force_rescan": True
+    })
+    assert scan_res.status_code == 202
+    scan_id = scan_res.json()["id"]
+    assert scan_res.json()["prompts_selected"] == 2
+
+    # Execute scan synchronously
+    await VisibilityEvaluatorService.execute_scan(scan_id, db=test_db_session)
+
+    # Fetch scan status
+    status_res = await client.get(f"/api/brands/{profiled_brand.id}/visibility/scans/{scan_id}")
+    assert status_res.status_code == 200
+    scan_data = status_res.json()
+
+    assert scan_data["status"] == "completed_with_errors"
+    assert scan_data["prompts_selected"] == 2
+    assert scan_data["prompts_completed"] == 1
+    assert scan_data["prompts_failed"] == 1
+
+    # CRITICAL: Denominator must be total prompts (2), NOT completed prompts (1)
+    # Cand1 is mentioned (1 mention). Mention rate = 1 / 2 = 0.50 (50%), NOT 1 / 1 = 1.0 (100%)
+    assert scan_data["mention_rate"] == pytest.approx(0.5, abs=0.01)
+    # Visibility score is appropriately penalized and not artificially inflated
+    assert scan_data["visibility_score"] < 70.0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_interrupted_scans(test_db_session: AsyncSession, profiled_brand):
+    """Verify orphaned running scans are transitioned to failed upon service reconciliation."""
+    orphan_scan = VisibilityScan(
+        brand_id=profiled_brand.id,
+        profile_version=1,
+        status="running",
+        provider="mock",
+        model_name="mock-evaluator",
+        prompts_selected=5
+    )
+    test_db_session.add(orphan_scan)
+    await test_db_session.commit()
+    await test_db_session.refresh(orphan_scan)
+
+    recovered_count = await VisibilityEvaluatorService.reconcile_interrupted_scans(test_db_session)
+    assert recovered_count >= 1
+
+    await test_db_session.refresh(orphan_scan)
+    assert orphan_scan.status == "failed"
+    assert "restart" in orphan_scan.error_summary.lower()
+
+

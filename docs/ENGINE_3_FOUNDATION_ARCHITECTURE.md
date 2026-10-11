@@ -148,4 +148,79 @@ A total of **103 tests** executed and passed cleanly:
 ### 4.3 Provider Limitations & Deployment Notes
 > [!NOTE]
 > Local automated and browser verification used the `mock` provider adapter (`mock-evaluator-v1`) to guarantee deterministic offline execution without making external network calls.
-> A live Google Gemini provider (`GeminiAIModelProvider`) is fully implemented in `app/evaluator/providers/gemini_provider.py`. To execute live scans against Google Gemini, set `LLM_API_KEY` in environment variables or configuration. When no API key is configured, the system safely falls back to the labeled mock provider.
+> A live Google Gemini provider (`GeminiModelProvider`) is fully implemented in `app/evaluator/providers/gemini_provider.py`. To execute live scans against Google Gemini, set `LLM_API_KEY` in environment variables or configuration. When no API key is configured, the system safely falls back to the labeled mock provider.
+
+---
+
+## 5. Engine 3 Production Readiness Audit & Verification Report
+
+### 5.1 Confirmed Defects and Root Causes
+
+| Defect # | Category | Description | Root Cause | Fix Applied |
+|---|---|---|---|---|
+| **D1** | **Evaluator Attribution** | Target brand falsely marked as `recommended` when competitor was recommended in the same text | `VisibilityResponseEvaluator` fell back to a global text match for recommendation phrases if a brand was mentioned anywhere in the document | Sentence-isolated attribution: positive recommendation phrases only count for the target brand if they occur in sentences directly mentioning the target brand |
+| **D2** | **Rank Detection** | Competitor ranked #1 mentioning target brand in prose falsely assigned Rank #1 to target brand | `_detect_list_rank` searched for brand name anywhere in the item line without checking if it was the subject/header | Restructured list item parsing to check the title prefix before delimiters (`—`, `:`, `-`, bold markdown) before assigning rank |
+| **D3** | **Security & Credential Leakage** | Gemini API key passed in URL query string (`?key=...`) | Standard Google REST documentation often uses query parameters, which are logged in reverse proxies and HTTP client error logs | Migrated exclusively to `x-goog-api-key` HTTP request header and added regex sanitizer `_sanitize_error_message` |
+| **D4** | **Metrics & Aggregation** | Partial query failures artificially inflated visibility and mention scores | Denominator was `completed_count` rather than `total_prompts` (`prompts_selected`) | Denominators for `mention_rate` and `recommendation_rate` now strictly use `total_prompts`, honestly reflecting unobserved queries |
+| **D5** | **Reliability & Concurrency** | Concurrency semaphore was instantiated locally per-scan | Allowed unbounded parallel requests across simultaneous concurrent scans | Introduced global shared semaphore dictionary (`_GLOBAL_PROVIDER_SEMAPHORES`) limiting concurrent provider requests across the entire process |
+| **D6** | **Reliability & Crash Recovery** | Application restart left running scans permanently stuck in `running` | Scans lacked startup reconciliation | Added `reconcile_interrupted_scans()` called during FastAPI application startup lifespan to mark interrupted scans as `failed` |
+| **D7** | **Frontend Truthfulness** | UI did not clearly warn users when mock simulation data was displayed | No warning banner existed on scorecard for mock provider runs | Added prominent `#eval-mock-banner` warning notice in yellow/amber clearly identifying simulated data |
+| **D8** | **Frontend Error Transparency** | Failed query evaluations displayed as `NOT MENTIONED` rather than `QUERY FAILED` | UI lacked status discrimination for prompt evaluation failure | Added `QUERY FAILED` and `UNEVALUATED` badges plus red error banner displaying verbatim `error_details` |
+
+---
+
+### 5.2 Aggregation Formulas & Mathematical Integrity
+
+1. **Brand Mention Rate:**
+   $$\text{Mention Rate} = \frac{\sum [r.\text{brand\_mentioned} == \text{True}]}{\text{Scan}.\text{prompts\_selected}}$$
+   *Edge Case Behavior:* If all prompts fail (0 completed), Mention Rate is $0.0$ ($0\%$), not NaN or 100%.
+
+2. **Recommendation Rate:**
+   $$\text{Recommendation Rate} = \frac{\sum [r.\text{recommendation\_status} == \text{"recommended"}]}{\text{Scan}.\text{prompts\_selected}}$$
+   *Edge Case Behavior:* Strictly penalizes failures and neutral mentions. Denominator never collapses.
+
+3. **Average Position in Lists:**
+   $$\text{Avg Position} = \frac{\sum r.\text{visibility\_rank}}{N_{\text{ranked}}}$$
+   *Edge Case Behavior:* Evaluated only over items where a numerical rank was genuinely detected. If no ranked lists exist, returns `None` (rendered as `N/A` in UI).
+
+4. **Aggregate Visibility Score (0–100):**
+   $$\text{Score} = (50 \times \text{Mention Rate}) + (35 \times \text{Recommendation Rate}) + (15 \times \text{Position Score}) - \text{Penalty}$$
+   *Edge Case Behavior:* Capped strictly between $0.0$ and $100.0$. Scans with partial errors are categorized as `completed_with_errors`.
+
+---
+
+### 5.3 Test Suite Growth & Regression Results
+
+- **Baseline Test Count:** 103 passed
+- **Final Test Count:** **120 passed, 0 failed** (+17 tests)
+- **New Regression Test Suites:**
+  - `tests/test_engine3_gemini.py` (7 tests): Init, missing API key, 200 OK with grounding citations and token parsing, 429 rate limit categorization, 401 auth failure categorization, timeout handling, safety filter blocking.
+  - `tests/test_engine3_evaluator.py` (+6 tests): Substring word boundary isolation, competitor recommendation attribution, recommendation negation, competitor self-brand variant exclusion, list rank detection with competitor at top, citation punctuation trimming, empty/whitespace response handling.
+  - `tests/test_engine3_api.py` (+4 tests): Scan idempotency, honest denominators on partial failure, interrupted scan reconciliation, tenant isolation.
+
+---
+
+### 5.4 Google Chrome End-to-End Verification Evidence
+
+- **Browser:** Google Chrome (Puppeteer / CDP subagent)
+- **Environment:** Localhost `http://127.0.0.1:8000/`
+- **Brand Under Test:** HubSpot (`www.hubspot.com`)
+- **Scan Executed:** 20 approved Engine 2 prompts evaluated with `Mock Provider`
+- **Observed Behavior:**
+  - `COMPLETED` badge displayed in green.
+  - Simulated data warning banner displayed prominently: `⚠️ SIMULATED DATA NOTICE: This visibility scan used the offline Mock AI Provider (deterministic simulation). Scores and evaluations reflect local mock test patterns and do not represent actual live LLM visibility.`
+  - Scorecard populated: Visibility Score (`38.5 / 100`), Mention Rate (`70%`), Recommendation Rate (`0%`), Avg Position (`N/A`), Prompts Evaluated (`20 / 20`).
+  - Observed AI responses rendered with `MENTIONED`, `NEUTRAL MENTION`, and `NOT MENTIONED` badges.
+  - "Inspect Raw AI Response" modal opened, accurately displaying provider, latency, model, and full response text.
+- **Artifact Screenshots:**
+  - `engine3_scorecard_top_1791739512562.png`: Complete top view showing header, provider controls, simulated data warning banner, and 5-metric scorecard.
+  - `engine3_scorecard_banner_1791739431176.png`: Cards and modal interaction view.
+
+---
+
+### 5.5 Production Readiness & Operational Limitations
+
+1. **Provider Key Status:** `LLM_API_KEY` was not configured in the local test environment. Live provider verification was performed via comprehensive HTTP mocks and contract tests. Live provider verification is explicitly marked as **verified in test harnesses, awaiting live production credentials**.
+2. **Crash Resilience:** In-memory `asyncio.create_task` handles background execution. Process restarts transition pending/running tasks to `failed` upon startup reconciliation. For enterprise multi-worker horizontal scaling, Celery or Redis Streams will be required in a future release.
+3. **Cost Controls:** Engine 3 enforces a default ceiling of 20 prompts per scan, global concurrency semaphore of 3, 25-second timeout, and exponential backoff limited to 2 retries on 429/5xx errors.
+

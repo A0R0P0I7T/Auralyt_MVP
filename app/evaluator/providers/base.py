@@ -10,9 +10,13 @@ class ProviderResponse(BaseModel):
     provider: str = Field(description="Provider identifier (e.g. mock, gemini, openai)")
     model_name: str = Field(description="Exact model identifier (e.g. mock-evaluator, gemini-1.5-flash)")
     latency_ms: int = Field(default=0, description="End-to-end request latency in milliseconds")
-    tokens_used: Optional[int] = Field(default=None, description="Reported token count if available")
+    tokens_used: Optional[int] = Field(default=None, description="Reported total token count if available")
+    prompt_tokens: Optional[int] = Field(default=None, description="Prompt input tokens if available")
+    completion_tokens: Optional[int] = Field(default=None, description="Generated output tokens if available")
+    grounding_citations: List[str] = Field(default_factory=list, description="Citations extracted from provider grounding metadata")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Raw metadata from provider (headers, citations, usage)")
     is_success: bool = Field(default=True, description="Whether the request succeeded")
+    is_retryable: bool = Field(default=False, description="Whether failure is transient and eligible for retry")
     error_message: Optional[str] = Field(default=None, description="Error message if request failed")
 
 

@@ -830,6 +830,8 @@ function resetVisibilityScorecard() {
   document.getElementById("stat-avg-position").innerText = "N/A";
   document.getElementById("stat-eval-completed").innerText = "0 / 0";
   document.getElementById("eval-run-info").style.display = "none";
+  const mockBanner = document.getElementById("eval-mock-banner");
+  if (mockBanner) mockBanner.style.display = "none";
 }
 
 async function handleStartVisibilityScan() {
@@ -916,8 +918,17 @@ function startScanPolling(scanId) {
 
 function updateScanSummaryUI(scan) {
   const badge = document.getElementById("eval-status-badge");
-  badge.innerText = (scan.status || "READY").toUpperCase();
-  badge.className = `badge badge-${scan.status === "completed" ? "completed" : (scan.status === "failed" ? "failed" : "pending")}`;
+  badge.innerText = (scan.status || "READY").toUpperCase().replace(/_/g, ' ');
+  let badgeClass = "badge-pending";
+  if (scan.status === "completed") badgeClass = "badge-completed";
+  else if (scan.status === "completed_with_warnings") badgeClass = "badge-warning";
+  else if (scan.status === "failed") badgeClass = "badge-failed";
+  badge.className = `badge ${badgeClass}`;
+
+  const mockBanner = document.getElementById("eval-mock-banner");
+  if (mockBanner) {
+    mockBanner.style.display = (scan.provider === "mock") ? "block" : "none";
+  }
 
   document.getElementById("stat-visibility-score").innerText = (scan.visibility_score != null ? scan.visibility_score : 0).toFixed(1);
   document.getElementById("stat-mention-rate").innerText = `${((scan.mention_rate != null ? scan.mention_rate : 0) * 100).toFixed(0)}%`;
@@ -986,8 +997,12 @@ function filterVisibilityResults() {
   }
 
   container.innerHTML = filtered.map(r => {
+    const isFailed = r.execution_status === "failed";
+
     let recBadge = "";
-    if (r.recommendation_status === "recommended") {
+    if (isFailed) {
+      recBadge = `<span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 1px dashed rgba(148, 163, 184, 0.4);">UNEVALUATED</span>`;
+    } else if (r.recommendation_status === "recommended") {
       recBadge = `<span class="badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);">RECOMMENDED</span>`;
     } else if (r.recommendation_status === "neutral_mention") {
       recBadge = `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4);">NEUTRAL MENTION</span>`;
@@ -997,16 +1012,21 @@ function filterVisibilityResults() {
       recBadge = `<span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #94a3b8;">NOT MENTIONED</span>`;
     }
 
-    const mentionBadge = r.brand_mentioned
-      ? `<span class="badge badge-completed">MENTIONED</span>`
-      : `<span class="badge badge-failed">NOT MENTIONED</span>`;
+    let mentionBadge = "";
+    if (isFailed) {
+      mentionBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">QUERY FAILED</span>`;
+    } else if (r.brand_mentioned) {
+      mentionBadge = `<span class="badge badge-completed">MENTIONED</span>`;
+    } else {
+      mentionBadge = `<span class="badge badge-failed">NOT MENTIONED</span>`;
+    }
 
-    const pos = r.comparative_position || r.comparative_positioning;
+    const pos = (!isFailed) ? (r.comparative_position || r.comparative_positioning) : null;
     const posChip = pos
       ? `<span class="badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); text-transform: uppercase;">${escapeHtml(pos.replace(/_/g, ' '))}</span>`
       : "";
 
-    const rank = r.visibility_rank || r.position_in_list;
+    const rank = (!isFailed) ? (r.visibility_rank || r.position_in_list) : null;
     const rankChip = rank
       ? `<span class="badge" style="background: #1e293b; color: #facc15; font-weight: 600;">Rank #${rank}</span>`
       : "";
@@ -1037,6 +1057,12 @@ function filterVisibilityResults() {
          </div>`
       : "";
 
+    const errorHtml = isFailed && r.error_details
+      ? `<div style="background: rgba(239, 68, 68, 0.1); border-left: 3px solid #ef4444; padding: 0.5rem 0.85rem; border-radius: 0 4px 4px 0; font-size: 0.85rem; color: #fca5a5; margin-top: 0.6rem;">
+           <strong>Query Error:</strong> ${escapeHtml(r.error_details)}
+         </div>`
+      : "";
+
     return `
       <div class="card" style="margin-bottom: 1rem; padding: 1.25rem; background: #131c2e; border: 1px solid var(--border-color);">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
@@ -1056,6 +1082,7 @@ function filterVisibilityResults() {
           </button>
         </div>
 
+        ${errorHtml}
         ${contextHtml}
         ${compHtml}
         ${citHtml}

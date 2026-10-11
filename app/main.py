@@ -19,6 +19,9 @@ async def lifespan(app: FastAPI):
     setup_logging(debug=settings.DEBUG)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Reconcile any orphaned/interrupted Engine 3 visibility scans
+    from app.evaluator.service import VisibilityEvaluatorService
+    await VisibilityEvaluatorService.reconcile_interrupted_scans()
     yield
     # Cleanup on shutdown
     await engine.dispose()

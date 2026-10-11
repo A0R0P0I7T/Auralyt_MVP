@@ -56,14 +56,16 @@ POSITIVE_RECOMMENDATION_PATTERNS = [
 
 # Negative recommendation patterns
 NEGATIVE_RECOMMENDATION_PATTERNS = [
-    r"\bdo\s+not\s+recommend\b",
+    r"\b(?:do\s+not|don\'t|would\s+not|wouldn\'t|never|cannot)\s+recommend\b",
     r"\bnot\s+recommended\b",
+    r"\bnot\s+(?:the\s+)?(?:best|top|ideal|leading|first)\s+(?:choice|option|pick|solution|tool|platform)\b",
     r"\bavoid\b",
     r"\bfalls\s+short\b",
     r"\blacks\s+(?:essential|critical|key|modern)\b",
     r"\boutdated\b",
     r"\binferior\b",
     r"\blagging\s+behind\b",
+    r"\bdrawbacks?\b",
     r"\bsteep\s+learning\s+curve\s+with\s+poor\b",
     r"\bexpensive\s+with\s+limited\b",
 ]
@@ -117,7 +119,6 @@ class VisibilityResponseEvaluator:
             end_pos = min(len(clean_text), match.end() + 140)
             snippet = clean_text[start_pos:end_pos].strip()
 
-            # Clean snippet boundary to sentence breaks if possible
             if start_pos > 0 and not snippet.startswith((".", "!", "?")):
                 snippet = "..." + snippet
             if end_pos < len(clean_text) and not snippet.endswith((".", "!", "?")):
@@ -139,68 +140,111 @@ class VisibilityResponseEvaluator:
             if key in target_brand_lower or key in domain_clean.lower():
                 candidates.update(comp_list)
 
-        # Detect competitors in text using word boundaries
+        # Detect competitors in text using word boundaries, strictly filtering out target brand & variants
         for comp in candidates:
-            if comp.lower() == target_brand_lower or comp.lower() == domain_host.lower():
+            c_low = comp.lower()
+            if (c_low == target_brand_lower or
+                target_brand_lower in c_low or
+                c_low in target_brand_lower or
+                domain_host.lower() in c_low):
                 continue
             comp_pattern = re.compile(rf"\b{re.escape(comp)}\b", re.IGNORECASE)
             if comp_pattern.search(clean_text) and comp not in detected_competitors:
                 detected_competitors.append(comp)
 
         # Also extract structured list items that might be named competitors
-        list_items = re.findall(r"(?:^|\n)\s*(?:\d+\.|\*|\-)\s+([A-Za-z0-9\.\-\s]{2,30}?)(?:—|–|-|:|\s{2,}|\n)", text)
+        list_items = re.findall(r"(?:^|\n)\s*(?:\d+[\.\)]|\*|\-)\s+([A-Za-z0-9\.\-\s]{2,30}?)(?:—|–|-|:|\s{2,}|\n)", text)
         for item in list_items:
             item_clean = item.strip().replace("**", "")
-            if item_clean.lower() != target_brand_lower and 2 <= len(item_clean) <= 25:
+            i_low = item_clean.lower()
+            if (i_low == target_brand_lower or
+                target_brand_lower in i_low or
+                domain_host.lower() in i_low):
+                continue
+            if 2 <= len(item_clean) <= 25:
                 # Disallow generic words
-                if not any(g in item_clean.lower() for g in ("option", "feature", "summary", "conclusion", "pricing", "alternative", "step", "reason")):
-                    if item_clean not in detected_competitors and item_clean.lower() not in [c.lower() for c in detected_competitors]:
+                if not any(g in i_low for g in ("option", "feature", "summary", "conclusion", "pricing", "alternative", "step", "reason", "overview", "introduction")):
+                    if item_clean not in detected_competitors and i_low not in [c.lower() for c in detected_competitors]:
                         detected_competitors.append(item_clean)
 
         res.competitor_mentions = detected_competitors[:10]
 
         # 3. Recommendation & Endorsement Analysis
         if res.brand_mentioned:
-            context_to_check = (res.mention_context or clean_text).lower()
-            full_lower = clean_text.lower()
-
-            is_positive = any(re.search(pat, context_to_check) for pat in POSITIVE_RECOMMENDATION_PATTERNS)
-            is_negative = any(re.search(pat, context_to_check) for pat in NEGATIVE_RECOMMENDATION_PATTERNS)
-
-            if is_positive and not is_negative:
-                res.recommendation_status = "recommended"
-                res.sentiment_score = 0.85
-            elif is_negative:
-                res.recommendation_status = "not_recommended"
-                res.sentiment_score = -0.75
-            else:
-                # Check if mentioned favorably elsewhere in full text
-                if any(re.search(pat, full_lower) for pat in POSITIVE_RECOMMENDATION_PATTERNS):
-                    res.recommendation_status = "recommended"
-                    res.sentiment_score = 0.60
-                elif any(w in context_to_check for w in ("also", "another", "such as", "alternative", "including")):
-                    res.recommendation_status = "neutral_mention"
-                    res.sentiment_score = 0.15
-                else:
-                    res.recommendation_status = "neutral_mention"
-                    res.sentiment_score = 0.0
-
-            # 4. Visibility Rank and Comparative Position
             rank = cls._detect_list_rank(text, name_clean, domain_clean)
             res.visibility_rank = rank
 
-            if rank == 1 or "ranked #1" in context_to_check or "industry leader" in context_to_check:
-                res.comparative_position = "leader"
-            elif "alternative" in context_to_check:
-                res.comparative_position = "recommended_alternative"
-            elif rank and rank > 1:
-                res.comparative_position = "contender"
-            elif res.recommendation_status == "recommended":
-                res.comparative_position = "leader"
-            elif res.recommendation_status == "not_recommended":
+            # Break into sentences/clauses to accurately attribute endorsements
+            sentences = []
+            for line in text.split("\n"):
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                sents = re.split(r"(?<=[.!?])\s+", line_str)
+                sentences.extend(sents)
+
+            brand_sentences = [s for s in sentences if brand_pattern.search(s)]
+
+            has_negative = False
+            has_positive = False
+
+            for sent in brand_sentences:
+                sent_clean = sent.replace("**", "").replace("*", "")
+                sent_lower = sent_clean.lower()
+
+                if any(re.search(pat, sent_lower) for pat in NEGATIVE_RECOMMENDATION_PATTERNS):
+                    has_negative = True
+
+                for pat in POSITIVE_RECOMMENDATION_PATTERNS:
+                    m = re.search(pat, sent_lower)
+                    if m:
+                        pat_end = m.end()
+                        after_pat = sent_lower[pat_end:]
+                        before_pat = sent_lower[:m.start()]
+
+                        # Check if this positive pattern is actually attributing to a competitor
+                        comp_attributed = False
+                        for comp in detected_competitors:
+                            c_low = comp.lower()
+                            if (re.search(rf"^\s*(?:is\s+)?{re.escape(c_low)}\b", after_pat) or
+                                re.search(rf"\b{re.escape(c_low)}\s*(?:is\s+)?$", before_pat)):
+                                comp_attributed = True
+                                break
+
+                        if not comp_attributed:
+                            has_positive = True
+
+            # If brand is ranked #1 in an ordered list without negative remarks
+            if rank == 1 and not has_negative:
+                has_positive = True
+
+            context_to_check = (res.mention_context or clean_text).lower()
+
+            if has_negative:
+                res.recommendation_status = "not_recommended"
+                res.sentiment_score = -0.75
                 res.comparative_position = "unfavorable"
+            elif has_positive:
+                res.recommendation_status = "recommended"
+                res.sentiment_score = 0.85
+                if rank == 1 or "ranked #1" in context_to_check or "industry leader" in context_to_check or "market leader" in context_to_check:
+                    res.comparative_position = "leader"
+                elif "alternative" in context_to_check:
+                    res.comparative_position = "recommended_alternative"
+                else:
+                    res.comparative_position = "leader"
             else:
-                res.comparative_position = "mentioned_only"
+                res.recommendation_status = "neutral_mention"
+                res.sentiment_score = 0.0
+                if rank and rank > 1:
+                    res.comparative_position = "contender"
+                elif detected_competitors and any(re.search(pat, clean_text.lower()) for pat in POSITIVE_RECOMMENDATION_PATTERNS):
+                    # Competitor is recommended while target brand is merely mentioned
+                    res.comparative_position = "contender"
+                elif "alternative" in context_to_check:
+                    res.comparative_position = "contender"
+                else:
+                    res.comparative_position = "mentioned_only"
 
             res.evaluation_reasoning = (
                 f"Brand '{name_clean}' identified in response text. "
@@ -209,34 +253,48 @@ class VisibilityResponseEvaluator:
             )
         else:
             res.sentiment_score = 0.0
+            res.recommendation_status = "not_mentioned"
+            res.comparative_position = "not_mentioned"
             res.evaluation_reasoning = f"Brand '{name_clean}' was not mentioned in the AI model response."
 
-        # 5. Extract Citations & Source URLs (Strictly evidence-backed)
+        # 4. Extract Citations & Source URLs (Strictly evidence-backed & validated)
         extracted_urls = set()
+
+        def _clean_and_validate_url(candidate_url: str) -> Optional[str]:
+            if not candidate_url or not isinstance(candidate_url, str):
+                return None
+            url = candidate_url.strip().rstrip(".,;:)'\"]>")
+            if not (url.startswith("http://") or url.startswith("https://")):
+                return None
+            try:
+                parsed = urlparse(url)
+                if parsed.scheme in ("http", "https") and parsed.netloc:
+                    if "." in parsed.netloc or parsed.netloc.lower() == "localhost":
+                        return url
+            except Exception:
+                pass
+            return None
 
         # URLs in provider metadata (e.g. Google Gemini groundingMetadata)
         if provider_metadata:
             for g_url in provider_metadata.get("grounding_citations", []):
-                if isinstance(g_url, str) and g_url.startswith("http"):
-                    extracted_urls.add(g_url.strip())
+                valid_u = _clean_and_validate_url(g_url)
+                if valid_u:
+                    extracted_urls.add(valid_u)
 
         # Markdown links: [Title](https://...)
         md_links = re.findall(r"\[([^\]]+)\]\((https?://[^\)]+)\)", text)
         for _, link in md_links:
-            clean_link = link.strip().rstrip(".,;:")
-            extracted_urls.add(clean_link)
+            valid_u = _clean_and_validate_url(link)
+            if valid_u:
+                extracted_urls.add(valid_u)
 
         # Plain URLs in text
         plain_urls = re.findall(r"(?:https?://[^\s\)\],>]+)", text)
         for p_url in plain_urls:
-            clean_url = p_url.strip().rstrip(".,;:")
-            # Basic sanity check
-            try:
-                parsed = urlparse(clean_url)
-                if parsed.scheme in ("http", "https") and parsed.netloc:
-                    extracted_urls.add(clean_url)
-            except Exception:
-                pass
+            valid_u = _clean_and_validate_url(p_url)
+            if valid_u:
+                extracted_urls.add(valid_u)
 
         res.citations = sorted(list(extracted_urls))
 
@@ -248,17 +306,23 @@ class VisibilityResponseEvaluator:
         b_lower = brand_name.lower()
         d_lower = domain.lower().split(".")[0]
 
-        # Match lines like "1. **Linear**", "1) Linear", "1. Linear —"
         lines = text.split("\n")
-        current_rank = 1
         for line in lines:
             line_strip = line.strip()
             num_match = re.match(r"^(\d+)[\.\)]\s*(.+)", line_strip)
             if num_match:
                 item_num = int(num_match.group(1))
-                item_content = num_match.group(2).lower()
-                if b_lower in item_content or d_lower in item_content:
+                item_content = num_match.group(2)
+                # Subject/heading of the list item: before '—', '–', '-', ':', or inside '**...**'
+                bold_match = re.match(r"^\*\*([^*]+)\*\*", item_content)
+                if bold_match:
+                    title = bold_match.group(1).lower()
+                else:
+                    title = re.split(r"[—–\:\-]", item_content)[0].lower()
+
+                # Brand must be in the title/subject of the item, not just mentioned in comparison text
+                brand_in_title = bool(re.search(rf"\b({re.escape(b_lower)}|{re.escape(d_lower)})\b", title))
+                if brand_in_title:
                     return item_num
-                current_rank = item_num + 1
 
         return None

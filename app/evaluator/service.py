@@ -26,12 +26,52 @@ from app.evaluator.evaluator import VisibilityResponseEvaluator, EvaluationResul
 
 logger = logging.getLogger(__name__)
 
-# Concurrency limit per scan run to respect provider rate limits
-MAX_SCAN_CONCURRENCY = 3
+# Global concurrency semaphores per provider to enforce rate limits across simultaneous scans
+_GLOBAL_PROVIDER_SEMAPHORES: Dict[str, asyncio.Semaphore] = {
+    "gemini": asyncio.Semaphore(3),
+    "mock": asyncio.Semaphore(10),
+}
+
+
+def get_provider_semaphore(provider_name: str) -> asyncio.Semaphore:
+    """Return shared concurrency semaphore for provider."""
+    if provider_name not in _GLOBAL_PROVIDER_SEMAPHORES:
+        _GLOBAL_PROVIDER_SEMAPHORES[provider_name] = asyncio.Semaphore(3)
+    return _GLOBAL_PROVIDER_SEMAPHORES[provider_name]
 
 
 class VisibilityEvaluatorService:
     """Core orchestration service for Engine 3 AI Visibility Scans."""
+
+    @staticmethod
+    async def reconcile_interrupted_scans(db: Optional[AsyncSession] = None) -> int:
+        """
+        Reconciles orphaned scans that remained in 'pending' or 'running' status
+        following an unexpected process termination or server restart.
+        """
+        close_session = False
+        if db is None:
+            db = async_session_factory()
+            close_session = True
+
+        try:
+            stmt = select(VisibilityScan).where(
+                VisibilityScan.status.in_(["pending", "running"])
+            )
+            res = await db.execute(stmt)
+            interrupted = res.scalars().all()
+            for scan in interrupted:
+                scan.status = "failed"
+                scan.error_summary = "Scan execution interrupted by server shutdown or restart."
+                scan.completed_at = utc_now()
+
+            if interrupted:
+                await db.commit()
+                logger.info(f"Reconciled {len(interrupted)} interrupted visibility scan(s) to failed state.")
+            return len(interrupted)
+        finally:
+            if close_session:
+                await db.close()
 
     @staticmethod
     async def create_scan(
@@ -45,7 +85,7 @@ class VisibilityEvaluatorService:
     ) -> VisibilityScan:
         """
         Creates an AI Visibility scan for approved Engine 2 prompts.
-        Rejects unapproved or out-of-scope prompts.
+        Rejects unapproved or out-of-scope prompts. Prevents duplicate concurrent runs.
         """
         close_session = False
         if db is None:
@@ -57,9 +97,22 @@ class VisibilityEvaluatorService:
             if not brand:
                 raise ValueError("Brand not found.")
 
-            # Select approved, non-archived Engine 2 prompts for this brand
+            # Idempotency check: if an active scan is already pending/running, return it unless force_rescan is set
+            if not force_rescan:
+                active_stmt = select(VisibilityScan).where(
+                    VisibilityScan.brand_id == brand_id,
+                    VisibilityScan.status.in_(["pending", "running"])
+                ).order_by(desc(VisibilityScan.created_at))
+                active_res = await db.execute(active_stmt)
+                existing_active = active_res.scalars().first()
+                if existing_active:
+                    logger.info(f"Returning active visibility scan '{existing_active.id}' for brand '{brand_id}' (idempotent)")
+                    return existing_active
+
+            # Select approved, non-archived Engine 2 prompts matching brand profile version
             stmt = select(PromptCandidate).where(
                 PromptCandidate.brand_id == brand_id,
+                PromptCandidate.profile_version == brand.profile_version,
                 PromptCandidate.is_approved == True,
                 PromptCandidate.is_archived == False
             ).order_by(desc(PromptCandidate.quality_score))
@@ -164,7 +217,8 @@ class VisibilityEvaluatorService:
                 return
 
             provider = get_evaluator_provider(scan.provider)
-            semaphore = asyncio.Semaphore(MAX_SCAN_CONCURRENCY)
+            # Use global provider-level semaphore to respect rate limits across concurrent scans
+            semaphore = get_provider_semaphore(scan.provider)
 
             results_to_persist: List[VisibilityResult] = []
             tokens_total = 0
@@ -173,7 +227,7 @@ class VisibilityEvaluatorService:
 
             async def process_prompt(prompt_obj: PromptCandidate) -> Tuple[PromptCandidate, ProviderResponse, Optional[EvaluationResult]]:
                 async with semaphore:
-                    # Bounded retries for transient failures
+                    # Bounded retries for transient failures only
                     max_attempts = 2
                     last_resp: Optional[ProviderResponse] = None
 
@@ -193,6 +247,12 @@ class VisibilityEvaluatorService:
                                     provider_metadata=resp.metadata
                                 )
                                 return prompt_obj, resp, eval_res
+                            else:
+                                # If provider returned a permanent error (e.g. 401 Auth, 400 Bad Request), do not retry
+                                if not resp.is_retryable:
+                                    break
+                                if attempt < max_attempts - 1:
+                                    await asyncio.sleep(1.0)
                         except Exception as e:
                             logger.warning(f"Error querying provider on attempt {attempt+1}: {e}")
                             if attempt < max_attempts - 1:
@@ -205,6 +265,7 @@ class VisibilityEvaluatorService:
                             provider=scan.provider,
                             model_name=scan.model_name,
                             is_success=False,
+                            is_retryable=False,
                             error_message="All retry attempts failed to query provider."
                         )
                     return prompt_obj, last_resp, None
@@ -269,7 +330,7 @@ class VisibilityEvaluatorService:
                         competitor_mentions=[],
                         comparative_position="unknown",
                         citations=[],
-                        evaluation_reasoning="Provider query failed."
+                        evaluation_reasoning=f"Provider query failed: {p_resp.error_message or 'Unknown error'}"
                     )
                     results_to_persist.append(vis_res)
 
@@ -285,19 +346,22 @@ class VisibilityEvaluatorService:
             scan.total_tokens_used = tokens_total if tokens_total > 0 else None
             scan.completed_at = utc_now()
 
-            if completed_count > 0:
+            total_prompts = scan.prompts_selected or len(prompts)
+
+            if total_prompts > 0 and completed_count > 0:
                 mentions = sum(1 for r in results_to_persist if r.brand_mentioned)
                 recommendations = sum(1 for r in results_to_persist if r.recommendation_status == "recommended")
                 ranked = [r.visibility_rank for r in results_to_persist if r.visibility_rank is not None]
 
-                mention_rate = round(mentions / completed_count, 3)
-                recommendation_rate = round(recommendations / completed_count, 3)
+                # Denominator is total attempted prompts so partial failures do not artificially inflate scores
+                mention_rate = round(mentions / total_prompts, 3)
+                recommendation_rate = round(recommendations / total_prompts, 3)
                 avg_position = round(sum(ranked) / len(ranked), 2) if ranked else None
 
                 # Composite Visibility Score (0 - 100)
-                # 50% mention presence + 40% recommendation presence + 10% citation presence
+                # 50% mention presence + 40% recommendation presence + 10% citation presence (scaled by total_prompts)
                 citation_count = sum(len(r.citations) for r in results_to_persist)
-                citation_factor = min(citation_count / (completed_count * 2), 1.0) * 10
+                citation_factor = min(citation_count / (total_prompts * 2), 1.0) * 10
                 score = round((mention_rate * 50.0) + (recommendation_rate * 40.0) + citation_factor, 1)
 
                 scan.mention_rate = mention_rate
@@ -313,7 +377,7 @@ class VisibilityEvaluatorService:
                 scan.status = "completed"
             elif completed_count > 0:
                 scan.status = "completed_with_errors"
-                scan.error_summary = f"{failed_count} out of {len(prompts)} prompts failed to evaluate."
+                scan.error_summary = f"{failed_count} out of {total_prompts} prompts failed to evaluate."
             else:
                 scan.status = "failed"
                 scan.error_summary = "All prompt queries failed."
