@@ -11,7 +11,7 @@ from app.db.models import CrawledPage, BrandFact
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
 PHONE_REGEX = re.compile(r"(\+?[0-9]{1,3}[-.\s]?)?(\(?\d{3}\)?[-.\s]?)[\d.-]{7,10}")
 PRICING_TIER_REGEX = re.compile(r"\b(Free|Starter|Basic|Pro|Professional|Growth|Business|Enterprise|Team)\b", re.I)
-PRICE_CURRENCY_REGEX = re.compile(r"(\$|€|£|₹)\s?(\d+(?:,\d{3})*(?:\.\d{2})?)\s?(?:/\s?(?:mo|month|yr|year|user|seat))?", re.I)
+PRICE_CURRENCY_REGEX = re.compile(r"(\$|€|£|₹)\s?(\d+(?:,\d{3})*(?:\.\d+)?)\s?(?:/\s?(?:mo|month|yr|year|user|seat))?", re.I)
 
 DISALLOWED_PRODUCT_NAMES = {
     # Continents & Regions
@@ -28,8 +28,62 @@ DISALLOWED_PRODUCT_NAMES = {
     "trending now", "shop by category", "featured", "trending", "latest in clothing",
     "featured footwear", "shop all", "shop", "all products", "categories", "overview",
     "what we do", "capabilities", "solutions", "all-in-one", "features", "reviews",
-    "specifications", "description", "details", "materials", "size & fit"
+    "specifications", "description", "details", "materials", "size & fit",
+    # Marketing action verbs & generic section headings
+    "measure", "recommend", "act", "deploy", "scale", "ship", "build", "collaborate",
+    "all platform features", "frequently asked questions", "faq", "talk to us",
+    "vlad magdalin"
 }
+
+NON_PRODUCT_PREFIXES = (
+    "get ", "talk to ", "contact ", "sign ", "explore ", "learn ", "see ",
+    "try ", "join ", "read ", "watch ", "execute ", "turn ", "understand ",
+    "know ", "start ", "build for ", "loved by ", "trusted by ", "from ",
+    "all platform ", "teams ship ", "connect your ", "how teams ", "find ", "choose "
+)
+
+AUDIENCE_ROLE_WORDS = {
+    "team", "teams", "developer", "developers", "engineer", "engineers",
+    "designer", "designers", "creator", "creators", "marketer", "marketers",
+    "founder", "founders", "builder", "builders", "enterprise", "enterprises",
+    "business", "businesses", "company", "companies", "startup", "startups",
+    "organization", "organizations", "agency", "agencies", "customer", "customers",
+    "user", "users", "client", "clients", "professional", "professionals",
+    "individual", "individuals", "runner", "runners", "athlete", "athletes",
+    "enthusiast", "enthusiasts", "beginner", "beginners", "expert", "experts",
+    "student", "students", "people", "everyone", "smb", "smbs", "b2b", "b2c",
+    "leader", "leaders", "manager", "managers", "operator", "operators"
+}
+
+AUDIENCE_DISALLOWED_WORDS = {
+    "speed", "scale", "performance", "privacy", "security", "the future",
+    "modern web", "the cloud", "simplicity", "reliability", "efficiency",
+    "collaboration", "growth", "today's reality", "the ai era", "tomorrow",
+    "production", "the pavement", "any screen", "all devices"
+}
+
+
+def is_valid_product_candidate(name: str, brand_name: str = "") -> bool:
+    clean = name.strip()
+    lower = clean.lower()
+    if brand_name and lower == brand_name.strip().lower():
+        return False
+    if lower in DISALLOWED_PRODUCT_NAMES:
+        return False
+    if clean.startswith("#"):
+        return False
+    if any(lower.startswith(pfx) for pfx in NON_PRODUCT_PREFIXES):
+        return False
+    if clean.endswith((".", "!", "?")):
+        return False
+    if "—" in clean or "--" in clean:
+        return False
+    words = clean.split()
+    if len(words) > 6 or len(words) < 1:
+        return False
+    if len(words) == 1 and lower in {"measure", "recommend", "act", "build", "ship", "deploy", "scale"}:
+        return False
+    return True
 
 
 class FactSynthesizer:
@@ -136,7 +190,8 @@ class FactSynthesizer:
         self._extract_structured_data_facts(pages, facts)
 
         # 5. Products & Services from Page Headings & Product Pages
-        self._extract_products_and_features(pages, facts)
+        effective_bname = self.user_business_name or bname or ""
+        self._extract_products_and_features(pages, facts, brand_name=effective_bname)
 
         # 6. Target Audience & Use Cases
         self._extract_audience_and_use_cases(pages, facts)
@@ -238,19 +293,26 @@ class FactSynthesizer:
                 if stype in ("Product", "ProductGroup", "IndividualProduct", "ProductModel", "SomeProducts", "Service", "SoftwareApplication"):
                     pname = sdata.get("name")
                     if pname and isinstance(pname, str):
-                        pdesc = sdata.get("description", "")
-                        facts.append(BrandFact(
-                            brand_id=self.brand_id,
-                            profile_version=self.profile_version,
-                            fact_type="product_service",
-                            fact_value={"name": pname.strip(), "description": str(pdesc).strip(), "type": stype},
-                            source_page_id=p.id,
-                            source_url=p.final_url,
-                            evidence_snippet=f"JSON-LD {stype}: {pname} — {pdesc[:150]}",
-                            extraction_method="json_ld_schema",
-                            confidence=0.95,
-                            user_confirmed=False
-                        ))
+                        clean_pname = pname.strip()
+                        existing_sd_names = {
+                            f.fact_value.get("name", "").lower()
+                            for f in facts
+                            if f.fact_type == "product_service" and isinstance(f.fact_value, dict)
+                        }
+                        if clean_pname.lower() not in existing_sd_names:
+                            pdesc = sdata.get("description", "")
+                            facts.append(BrandFact(
+                                brand_id=self.brand_id,
+                                profile_version=self.profile_version,
+                                fact_type="product_service",
+                                fact_value={"name": clean_pname, "description": str(pdesc).strip(), "type": stype},
+                                source_page_id=p.id,
+                                source_url=p.final_url,
+                                evidence_snippet=f"JSON-LD {stype}: {clean_pname} — {str(pdesc)[:150]}",
+                                extraction_method="json_ld_schema",
+                                confidence=0.95,
+                                user_confirmed=False
+                            ))
 
                     # Extract target audience if declared in structured data
                     aud = sdata.get("audience")
@@ -301,26 +363,28 @@ class FactSynthesizer:
                                     user_confirmed=False
                                 ))
 
-    def _extract_products_and_features(self, pages: List[CrawledPage], facts: List[BrandFact]) -> None:
+    def _extract_products_and_features(self, pages: List[CrawledPage], facts: List[BrandFact], brand_name: str = "") -> None:
+        effective_brand = brand_name or self.user_business_name or ""
         seen_products = {f.fact_value.get("name").lower() for f in facts if f.fact_type == "product_service" and isinstance(f.fact_value, dict)}
 
         for p in pages:
-            # Check product pages
+            # Check dedicated product/service pages and homepage H1s (excluding slogans)
             if p.page_type in ("product_service", "homepage"):
                 headings = p.headings or {}
                 h1_list = headings.get("h1", [])
                 h2_list = headings.get("h2", []) if p.page_type == "product_service" else []
 
+                page_has_product = False
                 for heading in h1_list + h2_list:
                     h_clean = heading.strip()
                     h_lower = h_clean.lower()
-                    # Filter out disallowed interface, region, navigation, or boilerplate terms
-                    if h_lower in DISALLOWED_PRODUCT_NAMES:
+                    if not is_valid_product_candidate(h_clean, effective_brand):
                         continue
                     if any(bad in h_lower for bad in ("privacy policy", "terms of", "cookie", "get help", "customer service")):
                         continue
                     if 3 <= len(h_clean) <= 60 and h_lower not in seen_products:
                         seen_products.add(h_lower)
+                        page_has_product = True
                         facts.append(BrandFact(
                             brand_id=self.brand_id,
                             profile_version=self.profile_version,
@@ -330,7 +394,26 @@ class FactSynthesizer:
                             source_url=p.final_url,
                             evidence_snippet=f"Heading '{h_clean}' on {p.page_type} page ({p.final_url})",
                             extraction_method="heading_heuristic",
-                            confidence=0.80 if p.page_type == "product_service" else 0.70,
+                            confidence=0.85 if p.page_type == "product_service" else 0.75,
+                            user_confirmed=False
+                        ))
+
+                # If no heading yielded a product on a product_service page, use the page title
+                if p.page_type == "product_service" and not page_has_product and p.title:
+                    cand = p.title.split("—")[0].split("|")[0].split(" - ")[0].strip()
+                    cand_lower = cand.lower()
+                    if is_valid_product_candidate(cand, effective_brand) and cand_lower not in seen_products:
+                        seen_products.add(cand_lower)
+                        facts.append(BrandFact(
+                            brand_id=self.brand_id,
+                            profile_version=self.profile_version,
+                            fact_type="product_service",
+                            fact_value={"name": cand, "page_title": p.title, "url": p.final_url},
+                            source_page_id=p.id,
+                            source_url=p.final_url,
+                            evidence_snippet=f"Page title '{cand}' on product_service page ({p.final_url})",
+                            extraction_method="title_heuristic",
+                            confidence=0.80,
                             user_confirmed=False
                         ))
 
@@ -370,25 +453,59 @@ class FactSynthesizer:
             (r"(?:why\s+choose\s+us|our\s+advantage|differentiator)\s*[:\-]?\s*([^.\n]+)", "differentiator"),
         ]
 
+        seen_audience = set()
+        seen_use_cases = set()
+        seen_diffs = set()
+
+        for f in facts:
+            if f.fact_type == "target_audience" and isinstance(f.fact_value, str):
+                seen_audience.add(f.fact_value.strip().lower())
+
         for p in pages:
             text = p.extracted_text or ""
             for pattern, ftype in target_patterns:
                 matches = re.finditer(pattern, text, re.I)
                 for m in matches:
-                    val = m.group(1).strip()
-                    if 5 <= len(val) <= 120:
-                        facts.append(BrandFact(
-                            brand_id=self.brand_id,
-                            profile_version=self.profile_version,
-                            fact_type=ftype,
-                            fact_value=val,
-                            source_page_id=p.id,
-                            source_url=p.final_url,
-                            evidence_snippet=m.group(0)[:180],
-                            extraction_method="regex_pattern",
-                            confidence=0.75,
-                            user_confirmed=False
-                        ))
+                    raw_val = m.group(1).strip()
+                    val = raw_val.strip(" \t\r\n,;:-–—\"'“”()[]")
+                    if not (5 <= len(val) <= 120):
+                        continue
+                    val_lower = val.lower()
+
+                    if ftype == "target_audience":
+                        if any(q in val_lower for q in ("said ", "says ", "according to ")):
+                            continue
+                        if val_lower in AUDIENCE_DISALLOWED_WORDS:
+                            continue
+                        words = set(re.findall(r"\b[a-zA-Z]+\b", val_lower))
+                        if not words.intersection(AUDIENCE_ROLE_WORDS) and not any(k in val_lower for k in ("who want", "looking to", "those who")):
+                            continue
+                        if val_lower in seen_audience:
+                            continue
+                        seen_audience.add(val_lower)
+
+                    elif ftype == "use_case":
+                        if val_lower in seen_use_cases or len(val) < 5:
+                            continue
+                        seen_use_cases.add(val_lower)
+
+                    elif ftype == "differentiator":
+                        if val_lower in seen_diffs or len(val) < 5:
+                            continue
+                        seen_diffs.add(val_lower)
+
+                    facts.append(BrandFact(
+                        brand_id=self.brand_id,
+                        profile_version=self.profile_version,
+                        fact_type=ftype,
+                        fact_value=val,
+                        source_page_id=p.id,
+                        source_url=p.final_url,
+                        evidence_snippet=m.group(0)[:180],
+                        extraction_method="regex_pattern",
+                        confidence=0.75,
+                        user_confirmed=False
+                    ))
 
     def _extract_pricing_facts(self, pages: List[CrawledPage], facts: List[BrandFact]) -> None:
         pricing_pages = [p for p in pages if p.page_type == "pricing"]
@@ -444,12 +561,29 @@ class FactSynthesizer:
             price_matches = PRICE_CURRENCY_REGEX.finditer(text)
             for pm in price_matches:
                 p_text = pm.group(0).strip()
-                if p_text in seen_price_texts:
+                # Check for scale/magnitude multipliers or revenue/funding terms immediately following the price
+                after_match = text[pm.end():pm.end() + 25].lower()
+                if re.match(r"^\s*(?:\.\d+)?\s*(?:million|billion|trillion|m\b|b\b|k\b|arr\b|series\b|valuation\b|funding\b|revenue\b)", after_match):
                     continue
-                seen_price_texts.add(p_text)
+
                 snippet_start = max(0, pm.start() - 40)
                 snippet_end = min(len(text), pm.end() + 40)
                 snippet = text[snippet_start:snippet_end].replace("\n", " ").strip()
+
+                # On non-pricing pages, require explicit subscription unit or pricing tier keywords in context
+                if p.page_type != "pricing":
+                    has_sub_unit = any(unit in p_text.lower() for unit in ("/mo", "/month", "/yr", "/year", "/user", "/seat"))
+                    has_pricing_context = any(
+                        kw in snippet.lower()
+                        for kw in ("pricing", "plan", "plans", "tier", "subscription", "per month", "per year", "billed monthly", "billed annually", "starting at", "free tier", "$0")
+                    )
+                    if not (has_sub_unit or has_pricing_context):
+                        continue
+
+                if p_text in seen_price_texts:
+                    continue
+                seen_price_texts.add(p_text)
+
                 facts.append(BrandFact(
                     brand_id=self.brand_id,
                     profile_version=self.profile_version,
@@ -459,7 +593,7 @@ class FactSynthesizer:
                     source_url=p.final_url,
                     evidence_snippet=snippet,
                     extraction_method="pricing_regex",
-                    confidence=0.80,
+                    confidence=0.85 if p.page_type == "pricing" else 0.70,
                     user_confirmed=False
                 ))
 

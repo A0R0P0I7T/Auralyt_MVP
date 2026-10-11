@@ -31,6 +31,7 @@ HIGH_VALUE_KEYWORDS = [
     "about", "product", "products", "service", "services", "feature", "features",
     "pricing", "price", "plan", "plans", "solution", "solutions", "faq", "contact",
     "use-case", "use-cases", "case-study", "integrations", "security", "overview",
+    "ai", "enterprise", "platform", "tools", "insights",
     "t", "shop", "men", "women", "kids", "jordan", "acg", "launch"
 ]
 
@@ -38,8 +39,8 @@ HIGH_VALUE_KEYWORDS = [
 def score_url_priority(url: str) -> int:
     """Return priority score: lower number means higher priority."""
     url_lower = url.lower()
-    # Deprioritize help / support / locator URLs so they don't crowd out core products
-    if any(k in url_lower for k in ("/help", "/support", "/locator", "/store")):
+    # Deprioritize help / support / locator / changelog / deep api reference URLs so they don't crowd out core products
+    if any(k in url_lower for k in ("/help", "/support", "/locator", "/store", "/changelog", "/releases", "/rest-api", "/kb/guide")):
         return 3
     for kw in HIGH_VALUE_KEYWORDS:
         if f"/{kw}" in url_lower or f"-{kw}" in url_lower:

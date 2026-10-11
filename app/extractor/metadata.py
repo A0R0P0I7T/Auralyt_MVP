@@ -62,16 +62,25 @@ def extract_metadata_and_structured_data(html: str, current_url: str) -> Dict[st
                 el.decompose()
         except Exception:
             pass
+    for el in headings_soup.find_all(attrs={"aria-hidden": "true"}):
+        el.decompose()
+
+    def _clean_heading(h_text: str) -> str:
+        txt = h_text.strip()
+        half = len(txt) // 2
+        if half > 10 and txt[:half].strip() == txt[half:].strip():
+            txt = txt[:half].strip()
+        return txt
 
     h1_list: List[str] = []
     for h in headings_soup.find_all("h1"):
-        txt = h.get_text(separator=" ", strip=True)
+        txt = _clean_heading(h.get_text(separator=" ", strip=True))
         if txt and txt not in h1_list:
             h1_list.append(txt)
 
     h2_list: List[str] = []
     for h in headings_soup.find_all("h2"):
-        txt = h.get_text(separator=" ", strip=True)
+        txt = _clean_heading(h.get_text(separator=" ", strip=True))
         if txt and txt not in h2_list:
             h2_list.append(txt)
 

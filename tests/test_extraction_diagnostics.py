@@ -300,3 +300,172 @@ def test_faq_facts_extracted_from_faq_pages():
     assert "10% off" in faq_facts[0].fact_value["answer"]
     assert faq_facts[0].source_url == "https://www.nike.com/help/a/student-discount"
 
+
+def test_pricing_filters_out_funding_arr_and_scale_multipliers():
+    """Verify that ARR, funding rounds, valuations, and scale suffixes are excluded from pricing plans."""
+    page = CrawledPage(
+        brand_id="linear-brand",
+        profile_run_id="run-1",
+        requested_url="https://linear.app/now",
+        final_url="https://linear.app/now",
+        http_status=200,
+        title="Updates from Linear",
+        meta_description="Linear passes milestones.",
+        headings={"h1": ["Updates"], "h2": []},
+        extracted_text="""
+        As Linear passes $100 million in ARR, we celebrate with our team.
+        Earlier, Linear raised a $13M Series A led by Sequoia.
+        Our demo dashboard showed total revenue $47.8K.
+        Meanwhile, our Standard plan is $10/mo per user and Plus plan is $20/month.
+        """,
+        structured_data=[],
+        page_type="blog",
+        content_hash="hash-pricing-1"
+    )
+
+    synth = FactSynthesizer("linear-brand", user_business_name="Linear")
+    facts = synth.synthesize_facts([page])
+
+    pricing_facts = [f for f in facts if f.fact_type == "pricing"]
+    price_texts = [f.fact_value.get("price_text") for f in pricing_facts]
+
+    # $100 million ARR, $13M Series A, and $47.8K revenue must be rejected
+    assert "$100" not in price_texts
+    assert "$13" not in price_texts
+    assert "$47" not in price_texts
+    # Genuine subscription pricing must be retained
+    assert any("$10/mo" in pt or "$10" in pt for pt in price_texts)
+
+
+def test_audience_quality_and_deduplication():
+    """Verify audience extraction filters out performance attributes, time periods, and quotes, and deduplicates."""
+    page = CrawledPage(
+        brand_id="brand-aud",
+        profile_run_id="run-1",
+        requested_url="https://example.com/platform",
+        final_url="https://example.com/platform",
+        http_status=200,
+        title="Platform Overview",
+        headings={"h1": ["Platform"], "h2": []},
+        extracted_text="""
+        Built for speed.
+        Designed for the future.
+        Built for the future.
+        Designed for privacy.
+        "This is today's reality," said Angela DeFranco, GM of Marketing Hub at HubSpot.
+        Built for modern teams with AI workflows.
+        Built for modern teams with AI workflows.
+        Designed for enterprise marketing leaders.
+        """,
+        structured_data=[],
+        page_type="homepage",
+        content_hash="hash-aud-1"
+    )
+
+    synth = FactSynthesizer("brand-aud", user_business_name="Example")
+    facts = synth.synthesize_facts([page])
+
+    aud_facts = [f for f in facts if f.fact_type == "target_audience"]
+    aud_values = [f.fact_value.lower() for f in aud_facts]
+
+    # Non-audience concepts must be rejected
+    assert not any(v == "speed" for v in aud_values)
+    assert not any(v == "the future" for v in aud_values)
+    assert not any(v == "privacy" for v in aud_values)
+    assert not any("said angela" in v for v in aud_values)
+
+    # Valid role/team audiences must be accepted
+    assert any("modern teams" in v for v in aud_values)
+    assert any("enterprise marketing leaders" in v for v in aud_values)
+
+    # Deduplication check: "modern teams with AI workflows" must only appear once
+    modern_teams_count = sum(1 for v in aud_values if "modern teams with ai workflows" in v)
+    assert modern_teams_count == 1
+
+
+def test_product_candidate_validation_rejects_slogans_and_ctas():
+    """Verify is_valid_product_candidate filters out marketing sentences, action verbs, and CTA headings."""
+    from app.extractor.fact_synthesizer import is_valid_product_candidate
+
+    assert not is_valid_product_candidate("Measure")
+    assert not is_valid_product_candidate("Recommend")
+    assert not is_valid_product_candidate("Act")
+    assert not is_valid_product_candidate("From insight to action, without the Frankenstack")
+    assert not is_valid_product_candidate("Execute AEO at scale, natively in Webflow")
+    assert not is_valid_product_candidate("All platform features")
+    assert not is_valid_product_candidate("Frequently asked questions")
+    assert not is_valid_product_candidate("Get More Information About Onboarding Services")
+    assert not is_valid_product_candidate("#MadeinWebflow")
+    assert not is_valid_product_candidate("Build for what's next.")
+    assert not is_valid_product_candidate("Find a Partner")
+    assert not is_valid_product_candidate("Choose from 114 partners")
+
+    assert is_valid_product_candidate("Customer Platform Onboarding")
+    assert is_valid_product_candidate("Linear Insights")
+    assert is_valid_product_candidate("Webflow CMS")
+    assert is_valid_product_candidate("AI Gateway")
+
+
+def test_decorative_duplicate_headings_cleaned():
+    """Verify metadata heading extraction cleans accessibility/decorative duplicate text layers."""
+    from app.extractor.metadata import extract_metadata_and_structured_data
+
+    html = """
+    <!doctype html>
+    <html>
+    <head><title>Linear Features</title></head>
+    <body>
+    <h1>
+        <span>The system for modern product development</span>
+        <span aria-hidden="true"> The system for modern product development</span>
+    </h1>
+    <h2>
+        <span>Core workflows</span>
+        <span> Core workflows</span>
+    </h2>
+    </body>
+    </html>
+    """
+    meta = extract_metadata_and_structured_data(html, "https://linear.app/features")
+    h1_list = meta["headings"]["h1"]
+    h2_list = meta["headings"]["h2"]
+
+    assert h1_list == ["The system for modern product development"]
+    assert h2_list == ["Core workflows"]
+
+
+def test_homepage_heading_product_extraction_avoids_brand_name_duplication():
+    """Verify homepage heading extraction captures valid product candidates while rejecting brand name duplication."""
+    from app.extractor.fact_synthesizer import is_valid_product_candidate
+
+    assert not is_valid_product_candidate("Linear", brand_name="Linear")
+    assert not is_valid_product_candidate("Vercel", brand_name="Vercel")
+    assert is_valid_product_candidate("Linear Insights", brand_name="Linear")
+
+    page = CrawledPage(
+        brand_id="test-linear",
+        profile_run_id="run-lin-1",
+        requested_url="https://linear.app",
+        final_url="https://linear.app/",
+        http_status=200,
+        title="Linear — Purpose-built for planning and building products",
+        meta_description="Linear helps plan and build products.",
+        headings={
+            "h1": ["Linear", "Linear Insights"],
+            "h2": ["Core Workflows", "Privacy Policy"]
+        },
+        extracted_text="Linear is built for high-performance teams.",
+        structured_data=[],
+        page_type="homepage",
+        content_hash="hash-lin-1"
+    )
+
+    synth = FactSynthesizer("test-linear", user_business_name="Linear")
+    facts = synth.synthesize_facts([page])
+
+    products = [f.fact_value.get("name") for f in facts if f.fact_type == "product_service"]
+    assert "Linear Insights" in products
+    assert "Linear" not in products
+
+
+

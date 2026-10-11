@@ -140,7 +140,8 @@ class ScraplingCrawler:
         queue: List[CrawlItem] = []
         queue.append(CrawlItem(url=self.base_url, depth=0, priority=0))
 
-        for sm_url in sitemap_urls:
+        sorted_sitemaps = sorted(sitemap_urls, key=score_url_priority)
+        for sm_url in sorted_sitemaps[:self.page_limit]:
             if sm_url != self.base_url:
                 queue.append(CrawlItem(url=sm_url, depth=1, priority=score_url_priority(sm_url)))
 
@@ -185,17 +186,20 @@ class ScraplingCrawler:
 
                 # Discover new internal links if depth allows
                 if current_item.depth < self.max_depth:
-                    for link in page_data.get("internal_links", []):
+                    candidate_links = sorted(page_data.get("internal_links", []), key=score_url_priority)
+                    for link in candidate_links:
+                        link_prio = score_url_priority(link)
+                        prio = link_prio if (current_item.depth == 0 and link_prio <= 1) else link_prio + 1
                         if (
                             is_same_domain_or_subdomain(link, self.base_domain)
                             and link not in self.visited_urls
                             and not any(q.url == link for q in queue)
-                            and len(self.crawled_pages) + len(queue) < self.page_limit * 2
+                            and (len(self.crawled_pages) + len(queue) < self.page_limit * 3 or link_prio <= 1)
                         ):
                             queue.append(CrawlItem(
                                 url=link,
                                 depth=current_item.depth + 1,
-                                priority=score_url_priority(link) + 1
+                                priority=prio
                             ))
                             self.pages_discovered += 1
             else:
