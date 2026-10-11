@@ -33,6 +33,7 @@ class Brand(Base):
     facts: Mapped[List["BrandFact"]] = relationship("BrandFact", back_populates="brand", cascade="all, delete-orphan")
     prompt_runs: Mapped[List["PromptRun"]] = relationship("PromptRun", back_populates="brand", cascade="all, delete-orphan", order_by="desc(PromptRun.created_at)")
     prompts: Mapped[List["PromptCandidate"]] = relationship("PromptCandidate", back_populates="brand", cascade="all, delete-orphan")
+    visibility_scans: Mapped[List["VisibilityScan"]] = relationship("VisibilityScan", back_populates="brand", cascade="all, delete-orphan", order_by="desc(VisibilityScan.created_at)")
 
     __table_args__ = (
         Index("ix_brands_domain_org", "domain", "organization_id"),
@@ -190,9 +191,102 @@ class PromptCandidate(Base):
     # Relationships
     brand: Mapped["Brand"] = relationship("Brand", back_populates="prompts")
     run: Mapped["PromptRun"] = relationship("PromptRun", back_populates="prompts")
+    visibility_results: Mapped[List["VisibilityResult"]] = relationship("VisibilityResult", back_populates="prompt", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_prompt_candidates_brand_cat", "brand_id", "category"),
         Index("ix_prompt_candidates_brand_ver", "brand_id", "profile_version"),
+    )
+
+
+class VisibilityScan(Base):
+    __tablename__ = "visibility_scans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    brand_id: Mapped[str] = mapped_column(String(36), ForeignKey("brands.id", ondelete="CASCADE"), nullable=False, index=True)
+    profile_version: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+
+    # Status: pending, running, completed, completed_with_errors, failed, cancelled
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), default="mock", nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), default="mock-evaluator", nullable=False)
+
+    prompts_selected: Mapped[int] = mapped_column(Integer, default=0)
+    prompts_completed: Mapped[int] = mapped_column(Integer, default=0)
+    prompts_failed: Mapped[int] = mapped_column(Integer, default=0)
+
+    visibility_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0.0 - 100.0
+    mention_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)      # 0.0 - 1.0
+    recommendation_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True) # 0.0 - 1.0
+    average_position: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    total_tokens_used: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    config_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    brand: Mapped["Brand"] = relationship("Brand", back_populates="visibility_scans")
+    results: Mapped[List["VisibilityResult"]] = relationship("VisibilityResult", back_populates="scan", cascade="all, delete-orphan", order_by="desc(VisibilityResult.created_at)")
+
+    __table_args__ = (
+        Index("ix_visibility_scans_brand_status", "brand_id", "status"),
+    )
+
+
+class VisibilityResult(Base):
+    __tablename__ = "visibility_results"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    scan_id: Mapped[str] = mapped_column(String(36), ForeignKey("visibility_scans.id", ondelete="CASCADE"), nullable=False, index=True)
+    brand_id: Mapped[str] = mapped_column(String(36), ForeignKey("brands.id", ondelete="CASCADE"), nullable=False, index=True)
+    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompt_candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    # Status: success, error, timeout
+    execution_status: Mapped[str] = mapped_column(String(32), default="success", nullable=False)
+    raw_response_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_response_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tokens_used: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Structured Evaluation Dimensions
+    brand_mentioned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    mention_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # recommendation_status: recommended, neutral_mention, not_recommended, not_mentioned, unknown
+    recommendation_status: Mapped[str] = mapped_column(String(32), default="unknown", nullable=False, index=True)
+
+    # competitor_mentions: list of detected competitor brand names
+    competitor_mentions: Mapped[List[str]] = mapped_column(JSON, default=list)
+
+    # comparative_position: leader, recommended_alternative, contender, mentioned_only, unfavorable, not_mentioned, unknown
+    comparative_position: Mapped[str] = mapped_column(String(64), default="unknown", nullable=False)
+
+    # citations: verified URLs or sources present in response or metadata
+    citations: Mapped[List[str]] = mapped_column(JSON, default=list)
+
+    sentiment_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # -1.0 to 1.0
+    visibility_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)   # 1-indexed position in recommendations
+    evaluation_reasoning: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    # Relationships
+    scan: Mapped["VisibilityScan"] = relationship("VisibilityScan", back_populates="results")
+    prompt: Mapped["PromptCandidate"] = relationship("PromptCandidate", back_populates="visibility_results")
+
+    __table_args__ = (
+        Index("ix_visibility_results_brand_and_mention", "brand_id", "brand_mentioned"),
+        Index("ix_visibility_results_scan_prompt", "scan_id", "prompt_id"),
     )
 

@@ -19,6 +19,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/brands", tags=["Brands & Profiling"])
 
 
+@router.get(
+    "",
+    response_model=List[BrandResponse],
+    summary="List all onboarded brands"
+)
+async def list_brands(
+    db: AsyncSession = Depends(get_db)
+):
+    """List all onboarded brands ordered by creation date."""
+    stmt = select(Brand).order_by(desc(Brand.created_at))
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+
 @router.post(
     "/profile",
     response_model=dict,

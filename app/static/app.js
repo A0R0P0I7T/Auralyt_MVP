@@ -7,6 +7,9 @@ let promptsCurrentPage = 1;
 let promptsTotalPages = 1;
 let promptsSearchTimer = null;
 let currentPromptsData = [];
+let currentScanId = null;
+let evalPollInterval = null;
+let currentVisibilityResults = [];
 
 function switchTab(tabName) {
   document.querySelectorAll(".tab-content").forEach(el => el.style.display = "none");
@@ -25,6 +28,7 @@ function switchTab(tabName) {
     loadPrompts(1);
   }
   if (tabName === "pages" && currentBrandId) loadCrawledPages(1);
+  if (tabName === "evaluator" && currentBrandId) loadVisibilityData();
 }
 
 async function handleOnboard(event) {
@@ -764,4 +768,375 @@ async function openPromptEvidenceModal(promptId) {
     console.error("Open prompt evidence error:", e);
   }
 }
+
+/* ==========================================================
+   ENGINE 3: AI VISIBILITY EVALUATOR FUNCTIONS
+   ========================================================== */
+
+async function loadVisibilityData() {
+  if (!currentBrandId) {
+    document.getElementById("eval-results-container").innerHTML = `
+      <div style="text-align: center; color: var(--text-muted); padding: 2rem;">
+        Please select or onboard a brand first.
+      </div>
+    `;
+    return;
+  }
+
+  const errorBanner = document.getElementById("eval-error-banner");
+  errorBanner.style.display = "none";
+
+  try {
+    const res = await fetch(`/api/brands/${currentBrandId}/visibility/scans`);
+    if (!res.ok) {
+      throw new Error("Failed to load visibility scans.");
+    }
+    const data = await res.json();
+    const scans = data.items || [];
+
+    if (scans.length === 0) {
+      resetVisibilityScorecard();
+      document.getElementById("eval-results-container").innerHTML = `
+        <div style="text-align: center; color: var(--text-muted); padding: 2rem;">
+          No visibility scans recorded yet. Select options above and run your first scan.
+        </div>
+      `;
+      return;
+    }
+
+    // Latest scan
+    const latestScan = scans[0];
+    currentScanId = latestScan.id;
+    updateScanSummaryUI(latestScan);
+
+    if (latestScan.status === "pending" || latestScan.status === "running") {
+      startScanPolling(latestScan.id);
+    } else {
+      await loadScanResults(latestScan.id);
+    }
+  } catch (err) {
+    console.error("Error loading visibility data:", err);
+    errorBanner.innerText = err.message;
+    errorBanner.style.display = "block";
+  }
+}
+
+function resetVisibilityScorecard() {
+  document.getElementById("eval-status-badge").innerText = "READY";
+  document.getElementById("eval-status-badge").className = "badge badge-pending";
+  document.getElementById("stat-visibility-score").innerText = "0.0";
+  document.getElementById("stat-mention-rate").innerText = "0%";
+  document.getElementById("stat-recommendation-rate").innerText = "0%";
+  document.getElementById("stat-avg-position").innerText = "N/A";
+  document.getElementById("stat-eval-completed").innerText = "0 / 0";
+  document.getElementById("eval-run-info").style.display = "none";
+}
+
+async function handleStartVisibilityScan() {
+  if (!currentBrandId) {
+    alert("Please select or onboard a brand first.");
+    return;
+  }
+
+  const errorBanner = document.getElementById("eval-error-banner");
+  errorBanner.style.display = "none";
+
+  const btn = document.getElementById("start-eval-btn");
+  const provider = document.getElementById("eval_provider_select").value;
+  const maxPrompts = parseInt(document.getElementById("eval_max_prompts").value) || 20;
+  const forceRescan = document.getElementById("eval_force_rescan").checked;
+
+  btn.disabled = true;
+  btn.innerText = "⏳ Initiating Visibility Scan...";
+
+  try {
+    const res = await fetch(`/api/brands/${currentBrandId}/visibility/scans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: provider,
+        max_prompts: maxPrompts,
+        force_rescan: forceRescan
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || "Failed to start visibility scan.");
+    }
+
+    currentScanId = data.id;
+    updateScanSummaryUI(data);
+
+    btn.innerText = "⚡ Evaluating Prompts...";
+    startScanPolling(data.id);
+  } catch (err) {
+    errorBanner.innerText = err.message;
+    errorBanner.style.display = "block";
+    btn.disabled = false;
+    btn.innerText = "🚀 Run AI Visibility Scan";
+  }
+}
+
+function startScanPolling(scanId) {
+  if (evalPollInterval) clearInterval(evalPollInterval);
+
+  const checkStatus = async () => {
+    try {
+      const res = await fetch(`/api/brands/${currentBrandId}/visibility/scans/${scanId}`);
+      if (!res.ok) return;
+      const scan = await res.json();
+
+      updateScanSummaryUI(scan);
+
+      if (scan.status === "completed" || scan.status === "completed_with_warnings" || scan.status === "failed") {
+        clearInterval(evalPollInterval);
+        evalPollInterval = null;
+
+        const btn = document.getElementById("start-eval-btn");
+        btn.disabled = false;
+        btn.innerText = "🚀 Run AI Visibility Scan";
+
+        if (scan.status === "failed") {
+          const errorBanner = document.getElementById("eval-error-banner");
+          errorBanner.innerText = scan.error_summary || "Visibility scan failed.";
+          errorBanner.style.display = "block";
+        } else {
+          await loadScanResults(scan.id);
+        }
+      }
+    } catch (e) {
+      console.error("Scan poll error:", e);
+    }
+  };
+
+  checkStatus();
+  evalPollInterval = setInterval(checkStatus, 1500);
+}
+
+function updateScanSummaryUI(scan) {
+  const badge = document.getElementById("eval-status-badge");
+  badge.innerText = (scan.status || "READY").toUpperCase();
+  badge.className = `badge badge-${scan.status === "completed" ? "completed" : (scan.status === "failed" ? "failed" : "pending")}`;
+
+  document.getElementById("stat-visibility-score").innerText = (scan.visibility_score != null ? scan.visibility_score : 0).toFixed(1);
+  document.getElementById("stat-mention-rate").innerText = `${((scan.mention_rate != null ? scan.mention_rate : 0) * 100).toFixed(0)}%`;
+  document.getElementById("stat-recommendation-rate").innerText = `${((scan.recommendation_rate != null ? scan.recommendation_rate : 0) * 100).toFixed(0)}%`;
+  
+  const avgPos = scan.average_position;
+  document.getElementById("stat-avg-position").innerText = avgPos ? `#${avgPos.toFixed(1)}` : "N/A";
+
+  const completed = scan.prompts_completed != null ? scan.prompts_completed : (scan.completed_prompts || 0);
+  const total = scan.prompts_selected != null ? scan.prompts_selected : (scan.total_prompts || 0);
+  document.getElementById("stat-eval-completed").innerText = `${completed} / ${total}`;
+
+  const infoBox = document.getElementById("eval-run-info");
+  infoBox.style.display = "block";
+  document.getElementById("eval-info-id").innerText = (scan.id || "").slice(0, 8);
+  document.getElementById("eval-info-provider").innerText = (scan.provider || "").toUpperCase();
+  document.getElementById("eval-info-model").innerText = scan.model_name || scan.model_identifier || "mock";
+
+  if (scan.duration_seconds != null) {
+    document.getElementById("eval-info-duration").innerText = scan.duration_seconds.toFixed(2);
+  } else if (scan.completed_at && scan.started_at) {
+    const dur = ((new Date(scan.completed_at) - new Date(scan.started_at)) / 1000).toFixed(1);
+    document.getElementById("eval-info-duration").innerText = dur;
+  } else {
+    document.getElementById("eval-info-duration").innerText = "-";
+  }
+}
+
+async function loadScanResults(scanId) {
+  try {
+    const res = await fetch(`/api/brands/${currentBrandId}/visibility/scans/${scanId}/results`);
+    if (!res.ok) return;
+    const data = await res.json();
+    currentVisibilityResults = data.results || data.items || [];
+    filterVisibilityResults();
+  } catch (err) {
+    console.error("Failed to load scan results:", err);
+  }
+}
+
+function filterVisibilityResults() {
+  const mentionFilter = document.getElementById("filter-eval-mention").value;
+  const recFilter = document.getElementById("filter-eval-rec").value;
+
+  let filtered = currentVisibilityResults;
+
+  if (mentionFilter === "mentioned") {
+    filtered = filtered.filter(r => r.brand_mentioned);
+  } else if (mentionFilter === "not_mentioned") {
+    filtered = filtered.filter(r => !r.brand_mentioned);
+  }
+
+  if (recFilter !== "all") {
+    filtered = filtered.filter(r => r.recommendation_status === recFilter);
+  }
+
+  const container = document.getElementById("eval-results-container");
+
+  if (filtered.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; color: var(--text-muted); padding: 2rem;">
+        No evaluations match the selected filter criteria.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = filtered.map(r => {
+    let recBadge = "";
+    if (r.recommendation_status === "recommended") {
+      recBadge = `<span class="badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);">RECOMMENDED</span>`;
+    } else if (r.recommendation_status === "neutral_mention") {
+      recBadge = `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4);">NEUTRAL MENTION</span>`;
+    } else if (r.recommendation_status === "not_recommended") {
+      recBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">NOT RECOMMENDED</span>`;
+    } else {
+      recBadge = `<span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #94a3b8;">NOT MENTIONED</span>`;
+    }
+
+    const mentionBadge = r.brand_mentioned
+      ? `<span class="badge badge-completed">MENTIONED</span>`
+      : `<span class="badge badge-failed">NOT MENTIONED</span>`;
+
+    const pos = r.comparative_position || r.comparative_positioning;
+    const posChip = pos
+      ? `<span class="badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); text-transform: uppercase;">${escapeHtml(pos.replace(/_/g, ' '))}</span>`
+      : "";
+
+    const rank = r.visibility_rank || r.position_in_list;
+    const rankChip = rank
+      ? `<span class="badge" style="background: #1e293b; color: #facc15; font-weight: 600;">Rank #${rank}</span>`
+      : "";
+
+    const competitors = r.competitor_mentions || [];
+    const compHtml = competitors.length > 0
+      ? `<div style="display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
+           <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Competitors Cited:</span>
+           ${competitors.map(c => `<span style="background: #1e293b; border: 1px solid #334155; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; color: #f1f5f9;">${escapeHtml(c)}</span>`).join("")}
+         </div>`
+      : "";
+
+    const citations = r.citations || [];
+    const citHtml = citations.length > 0
+      ? `<div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
+           <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Sources / Citations:</span>
+           ${citations.map(c => {
+             const url = typeof c === 'string' ? c : (c.url || '#');
+             const title = typeof c === 'string' ? c : (c.title || c.url);
+             return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="font-size: 0.75rem; color: var(--accent-primary); background: rgba(59, 130, 246, 0.1); padding: 0.15rem 0.5rem; border-radius: 4px; text-decoration: none; border: 1px solid rgba(59, 130, 246, 0.25);">🔗 ${escapeHtml(title)}</a>`;
+           }).join("")}
+         </div>`
+      : "";
+
+    const contextHtml = r.mention_context
+      ? `<div style="background: #0f172a; border-left: 3px solid ${r.brand_mentioned ? 'var(--accent-success)' : 'var(--border-color)'}; padding: 0.6rem 0.85rem; border-radius: 0 6px 6px 0; font-size: 0.85rem; color: #cbd5e1; margin-top: 0.6rem; font-style: italic;">
+           "${escapeHtml(r.mention_context)}"
+         </div>`
+      : "";
+
+    return `
+      <div class="card" style="margin-bottom: 1rem; padding: 1.25rem; background: #131c2e; border: 1px solid var(--border-color);">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+          <div style="flex: 1; min-width: 250px;">
+            <div style="font-size: 0.95rem; font-weight: 600; color: #f8fafc; line-height: 1.4;">
+              ${escapeHtml(r.prompt_text)}
+            </div>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
+              ${mentionBadge}
+              ${recBadge}
+              ${posChip}
+              ${rankChip}
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="openRawResponseModal('${r.id}')">
+            🔍 Inspect Raw AI Response
+          </button>
+        </div>
+
+        ${contextHtml}
+        ${compHtml}
+        ${citHtml}
+      </div>
+    `;
+  }).join("");
+}
+
+function openRawResponseModal(resultId) {
+  const result = currentVisibilityResults.find(r => r.id === resultId);
+  if (!result) return;
+
+  const model = result.model_name || result.model_identifier || result.provider;
+  const latency = result.latency_ms != null ? result.latency_ms : (result.execution_time_ms || 0);
+  const status = result.execution_status || 'completed';
+
+  document.getElementById("raw-response-title").innerText = `AI Response: ${model}`;
+  document.getElementById("raw-response-meta").innerText = `Provider: ${(result.provider || '').toUpperCase()} | Execution Time: ${latency}ms | Status: ${status.toUpperCase()}`;
+  document.getElementById("raw-response-prompt").innerText = result.prompt_text || "";
+  document.getElementById("raw-response-body").innerText = result.raw_response_text || "(No response text recorded)";
+
+  document.getElementById("raw-response-modal").style.display = "flex";
+}
+
+/* ==========================================================
+   GLOBAL BRAND SELECTOR & INITIALIZATION
+   ========================================================== */
+
+async function initBrandSelector() {
+  try {
+    const res = await fetch("/api/brands");
+    if (!res.ok) return;
+    const brands = await res.json();
+    const select = document.getElementById("global-brand-select");
+    if (!select) return;
+
+    if (brands.length === 0) {
+      select.innerHTML = `<option value="">No brands found</option>`;
+      return;
+    }
+
+    select.innerHTML = brands.map(b => `
+      <option value="${b.id}">${escapeHtml(b.business_name || b.domain)} (${b.domain})</option>
+    `).join("");
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramBrandId = urlParams.get("brand_id");
+
+    if (paramBrandId && brands.some(b => b.id === paramBrandId)) {
+      currentBrandId = paramBrandId;
+      select.value = paramBrandId;
+    } else if (!currentBrandId) {
+      currentBrandId = brands[0].id;
+      select.value = brands[0].id;
+    }
+
+    if (currentBrandId) {
+      await loadBrandProfile(currentBrandId);
+    }
+  } catch (e) {
+    console.error("Failed to init brand selector:", e);
+  }
+}
+
+async function handleSelectBrand(brandId) {
+  if (!brandId) return;
+  currentBrandId = brandId;
+
+  const url = new URL(window.location);
+  url.searchParams.set("brand_id", brandId);
+  window.history.replaceState({}, "", url);
+
+  const activeBtn = document.querySelector(".nav-btn.active");
+  const activeTab = activeBtn ? activeBtn.getAttribute("onclick")?.match(/'([^']+)'/)?.[1] : "profile";
+  if (activeTab) {
+    switchTab(activeTab);
+  }
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  initBrandSelector();
+});
+
 
