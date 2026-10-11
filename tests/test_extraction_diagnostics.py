@@ -468,4 +468,248 @@ def test_homepage_heading_product_extraction_avoids_brand_name_duplication():
     assert "Linear" not in products
 
 
+def test_company_description_rejects_single_product_stories_and_selects_brand_mission():
+    """Verify company description extraction rejects individual garment/story descriptions and selects real brand landing descriptions."""
+    homepage = CrawledPage(
+        brand_id="test-nike",
+        profile_run_id="run-nike-1",
+        requested_url="https://www.nike.com",
+        final_url="https://www.nike.com/",
+        http_status=200,
+        title="Nike. Just Do It. Nike.com",
+        meta_description=None,
+        headings={"h1": [], "h2": []},
+        extracted_text="Nike homepage content.",
+        structured_data=[],
+        page_type="homepage",
+        content_hash="hash-home"
+    )
+    story_page = CrawledPage(
+        brand_id="test-nike",
+        profile_run_id="run-nike-1",
+        requested_url="https://www.nike.com/acg/acg-aireez",
+        final_url="https://www.nike.com/acg/acg-aireez",
+        http_status=200,
+        title="Field Test: ACG Aireez Long-Sleeve. Nike.com",
+        meta_description="The ACG Aireez Long-Sleeve goes on a journey to a salt flat in France.",
+        headings={"h1": ["ACG Aireez"], "h2": []},
+        extracted_text="Story content.",
+        structured_data=[],
+        page_type="blog",
+        content_hash="hash-story"
+    )
+    brand_landing_page = CrawledPage(
+        brand_id="test-nike",
+        profile_run_id="run-nike-1",
+        requested_url="https://www.nike.com/at/en",
+        final_url="https://www.nike.com/at/en",
+        http_status=200,
+        title="Nike. Just Do It. Nike AT",
+        meta_description="Inspiring the world's athletes, Nike delivers innovative products, experiences and services.",
+        headings={"h1": ["Nike"], "h2": []},
+        extracted_text="Nike delivers innovative products to inspire athletes worldwide.",
+        structured_data=[],
+        page_type="landing",
+        content_hash="hash-landing"
+    )
+
+    synth = FactSynthesizer("test-nike", user_business_name="Nike")
+    facts = synth.synthesize_facts([homepage, story_page, brand_landing_page])
+
+    desc_fact = next((f for f in facts if f.fact_type == "company_description"), None)
+    assert desc_fact is not None
+    assert "The ACG Aireez Long-Sleeve" not in desc_fact.fact_value
+    assert "Nike delivers innovative products" in desc_fact.fact_value
+    assert desc_fact.source_url == "https://www.nike.com/at/en"
+
+
+def test_product_candidate_validation_preserves_tech_names_and_rejects_navigation():
+    """Verify is_valid_product_candidate preserves tech products and compound titles while rejecting navigation labels and multi-sentence slogans."""
+    from app.extractor.fact_synthesizer import is_valid_product_candidate
+
+    # Legitimate products preserved (acceptance cases)
+    assert is_valid_product_candidate("Next.js")
+    assert is_valid_product_candidate("v0.dev")
+    assert is_valid_product_candidate("Dri-FIT")
+    assert is_valid_product_candidate("HubSpot Marketing Hub Enterprise")
+    assert is_valid_product_candidate("Customer Platform Onboarding")
+    assert is_valid_product_candidate("Linear Insights")
+    assert is_valid_product_candidate("Webflow CMS")
+
+    # Navigation labels and UI headers rejected (rejection cases)
+    assert not is_valid_product_candidate("Product")
+    assert not is_valid_product_candidate("Resources")
+    assert not is_valid_product_candidate("Company")
+    assert not is_valid_product_candidate("Trust")
+    assert not is_valid_product_candidate("Solutions")
+    assert not is_valid_product_candidate("Pricing")
+    assert not is_valid_product_candidate("Overview")
+
+    # Marketing slogans and multi-sentence headlines rejected
+    assert not is_valid_product_candidate("Trusted in production. Proven at scale.")
+    assert not is_valid_product_candidate("Power your AI with real-time web search")
+    assert not is_valid_product_candidate("Tavily in action")
+    assert not is_valid_product_candidate("Enterprise-grade security, built in!")
+
+
+def test_pricing_filters_prizes_and_fines_while_preserving_usage_and_packages():
+    """Verify pricing extraction rejects funding rounds, prizes, and fines while preserving usage-based rates and packages."""
+    page = CrawledPage(
+        brand_id="test-pricing-audit",
+        profile_run_id="run-p-1",
+        requested_url="https://example.com/api",
+        final_url="https://example.com/api",
+        http_status=200,
+        title="API Pricing & Usage",
+        meta_description="Pay-as-you-go pricing.",
+        headings={"h1": ["Pricing"], "h2": []},
+        extracted_text="""
+        Competition announcement: Winners take home $2,450 in prizes this week!
+        Regulatory update: The court issued fines of $4B against antitrust violators.
+        Funding milestone: The startup secured a $35M round of mezzanine financing.
+        Company news: Reduced tech costs by $600K through efficiency programs.
+
+        API Usage:
+        Starting rate is $0.008 / credit for high-volume endpoints.
+        Vector indexing costs $0.50 per 1M requests.
+        Enterprise Onboarding Package: Price: $10,000 one-time flat rate.
+        Monthly subscription: $15/mo billed annually.
+        """,
+        structured_data=[],
+        page_type="product_service",
+        content_hash="hash-p-1"
+    )
+
+    synth = FactSynthesizer("test-pricing-audit", user_business_name="Example")
+    facts = synth.synthesize_facts([page])
+
+    pricing_facts = [f for f in facts if f.fact_type == "pricing"]
+    extracted_prices = [f.fact_value.get("price_text") for f in pricing_facts]
+
+    # False positives rejected
+    assert "$2,450" not in extracted_prices
+    assert "$4" not in extracted_prices
+    assert "$35" not in extracted_prices
+    assert "$600" not in extracted_prices
+
+    # Legitimate prices preserved
+    assert any("$0.008" in p for p in extracted_prices)
+    assert any("$0.50" in p for p in extracted_prices)
+    assert any("$10,000" in p for p in extracted_prices)
+    assert any("$15" in p for p in extracted_prices)
+
+
+def test_target_audience_filters_abstract_metrics_and_preserves_diverse_roles():
+    """Verify target audience rejects abstract metrics while preserving diverse professional and organizational segments."""
+    page = CrawledPage(
+        brand_id="test-aud-audit",
+        profile_run_id="run-a-1",
+        requested_url="https://example.com/overview",
+        final_url="https://example.com/overview",
+        http_status=200,
+        title="Platform Overview",
+        meta_description="Who we serve.",
+        headings={"h1": ["Overview"], "h2": []},
+        extracted_text="""
+        Built for enterprise scale, performance, and reliability.
+        Designed for enterprise scale.
+        Built for speed and modern aesthetics.
+        Made for a great caption: "even the best years have a crash in them".
+        Designed for the communication between frontend and backend services.
+
+        Built for freelancers and consultants managing high-velocity projects.
+        Designed for nonprofit organizations and educational institutions.
+        Made for product teams building agentic AI applications.
+        """,
+        structured_data=[],
+        page_type="homepage",
+        content_hash="hash-a-1"
+    )
+
+    synth = FactSynthesizer("test-aud-audit", user_business_name="Example")
+    facts = synth.synthesize_facts([page])
+
+    audiences = [f.fact_value.lower() for f in facts if f.fact_type == "target_audience"]
+
+    # Abstract metrics and captions rejected
+    assert not any("enterprise scale, performance" in a for a in audiences)
+    assert not any(a == "enterprise scale" for a in audiences)
+    assert not any("caption:" in a for a in audiences)
+    assert not any("communication between" in a for a in audiences)
+    assert not any(a == "speed" for a in audiences)
+
+    # Legitimate diverse segments preserved
+    assert any("freelancers and consultants" in a for a in audiences)
+    assert any("nonprofit organizations" in a for a in audiences)
+    assert any("product teams" in a for a in audiences)
+
+
+def test_contact_info_filters_search_queries_video_links_and_personal_profiles():
+    """Verify contact info extraction rejects search URLs, video watch links, and personal author accounts while preserving corporate channels."""
+    page = CrawledPage(
+        brand_id="test-contact-audit",
+        profile_run_id="run-c-1",
+        requested_url="https://example.com/contact",
+        final_url="https://example.com/contact",
+        http_status=200,
+        title="Contact Us",
+        meta_description="Get in touch.",
+        headings={"h1": ["Contact"], "h2": []},
+        extracted_text="Email: support@example.com",
+        structured_data=[],
+        page_type="contact",
+        external_links=[
+            "http://search.twitter.com/search?q=%23inbound",
+            "https://twitter.com/intent/tweet?text=hello",
+            "https://www.youtube.com/watch?v=pYpw5jqI0l8",
+            "https://www.youtube.com/shorts/sample123",
+            "https://www.linkedin.com/in/author-caroline-123",
+            "https://www.linkedin.com/posts/jonfor-sample-post",
+            "https://github.com/sample-project/repo/blob/main/README.md",
+            "https://www.linkedin.com/company/example-corp",
+            "https://x.com/ExampleCorp",
+            "https://youtube.com/user/ExampleCorp",
+            "https://github.com/example-corp"
+        ],
+        content_hash="hash-c-1"
+    )
+    blog_page = CrawledPage(
+        brand_id="test-contact-audit",
+        requested_url="https://example.com/blog/article-1",
+        final_url="https://example.com/blog/article-1",
+        http_status=200,
+        title="Engineering at Example",
+        page_type="blog",
+        external_links=[
+            "https://twitter.com/hbfleish",
+            "https://twitter.com/jeff",
+            "https://twitter.com/ExampleCorp"
+        ],
+        content_hash="hash-c-2"
+    )
+
+    synth = FactSynthesizer("test-contact-audit", user_business_name="Example")
+    facts = synth.synthesize_facts([page, blog_page])
+
+    contacts = [f.fact_value for f in facts if f.fact_type == "contact_info"]
+    social_urls = [c.get("url") for c in contacts if isinstance(c, dict) and c.get("type") == "social_profile"]
+
+    # Noise rejected
+    assert "http://search.twitter.com/search?q=%23inbound" not in social_urls
+    assert "https://www.youtube.com/watch?v=pYpw5jqI0l8" not in social_urls
+    assert "https://www.youtube.com/shorts/sample123" not in social_urls
+    assert "https://www.linkedin.com/in/author-caroline-123" not in social_urls
+    assert "https://www.linkedin.com/posts/jonfor-sample-post" not in social_urls
+    assert "https://github.com/sample-project/repo/blob/main/README.md" not in social_urls
+    assert "https://twitter.com/hbfleish" not in social_urls
+    assert "https://twitter.com/jeff" not in social_urls
+
+    # Corporate channels preserved
+    assert "https://www.linkedin.com/company/example-corp" in social_urls
+    assert "https://x.com/ExampleCorp" in social_urls
+    assert "https://youtube.com/user/ExampleCorp" in social_urls
+    assert "https://github.com/example-corp" in social_urls
+
+
+
 

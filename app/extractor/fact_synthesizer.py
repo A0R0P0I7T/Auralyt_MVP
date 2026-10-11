@@ -35,24 +35,47 @@ DISALLOWED_PRODUCT_NAMES = {
     "vlad magdalin"
 }
 
+GENERIC_SINGLE_WORD_HEADINGS = {
+    "measure", "recommend", "act", "build", "ship", "deploy", "scale",
+    "product", "products", "resources", "company", "trust", "solutions",
+    "platform", "pricing", "customers", "docs", "documentation", "enterprise",
+    "blog", "news", "features", "careers", "legal", "security", "overview",
+    "about", "contact", "support", "help", "login", "signup", "register",
+    "community", "partners", "integrations", "templates", "guides", "changelog"
+}
+
 NON_PRODUCT_PREFIXES = (
     "get ", "talk to ", "contact ", "sign ", "explore ", "learn ", "see ",
     "try ", "join ", "read ", "watch ", "execute ", "turn ", "understand ",
     "know ", "start ", "build for ", "loved by ", "trusted by ", "from ",
-    "all platform ", "teams ship ", "connect your ", "how teams ", "find ", "choose "
+    "all platform ", "teams ship ", "connect your ", "how teams ", "find ", "choose ",
+    "power ", "trusted in ", "proven at ", "driven by ", "integrate your "
 )
 
 AUDIENCE_ROLE_WORDS = {
+    # Engineering, Design & Operations
     "team", "teams", "developer", "developers", "engineer", "engineers",
     "designer", "designers", "creator", "creators", "marketer", "marketers",
-    "founder", "founders", "builder", "builders", "enterprise", "enterprises",
-    "business", "businesses", "company", "companies", "startup", "startups",
-    "organization", "organizations", "agency", "agencies", "customer", "customers",
-    "user", "users", "client", "clients", "professional", "professionals",
-    "individual", "individuals", "runner", "runners", "athlete", "athletes",
-    "enthusiast", "enthusiasts", "beginner", "beginners", "expert", "experts",
-    "student", "students", "people", "everyone", "smb", "smbs", "b2b", "b2c",
-    "leader", "leaders", "manager", "managers", "operator", "operators"
+    "founder", "founders", "builder", "builders", "architect", "architects",
+    "coder", "coders", "programmer", "programmers", "operator", "operators",
+    # Business, Enterprise & SMB
+    "enterprise", "enterprises", "business", "businesses", "company", "companies",
+    "startup", "startups", "scaleup", "scaleups", "organization", "organizations",
+    "agency", "agencies", "customer", "customers", "user", "users", "client", "clients",
+    "professional", "professionals", "individual", "individuals", "smb", "smbs", "b2b", "b2c",
+    "leader", "leaders", "manager", "managers", "executive", "executives", "director", "directors",
+    # Specialized, Commerce & Creative
+    "freelancer", "freelancers", "consultant", "consultants", "contractor", "contractors",
+    "writer", "writers", "author", "authors", "blogger", "bloggers",
+    "analyst", "analysts", "scientist", "scientists", "researcher", "researchers", "academic", "academics",
+    "institution", "institutions", "nonprofit", "nonprofits", "non-profit", "non-profits",
+    "school", "schools", "university", "universities",
+    "retailer", "retailers", "merchant", "merchants", "buyer", "buyers", "seller", "sellers",
+    "specialist", "specialists", "practitioner", "practitioners",
+    # Consumer & Sports
+    "runner", "runners", "athlete", "athletes", "enthusiast", "enthusiasts",
+    "beginner", "beginners", "expert", "experts", "student", "students", "people", "everyone",
+    "consumer", "consumers", "community", "communities"
 }
 
 AUDIENCE_DISALLOWED_WORDS = {
@@ -76,12 +99,19 @@ def is_valid_product_candidate(name: str, brand_name: str = "") -> bool:
         return False
     if clean.endswith((".", "!", "?")):
         return False
+    if lower.endswith(" in action"):
+        return False
+    # Reject internal sentence breaks while preserving tech extensions like Next.js or v0.dev
+    if any(punct in clean for punct in ("!", "?")):
+        return False
+    if re.search(r"\.\s+[A-Za-z]", clean):
+        return False
     if "—" in clean or "--" in clean:
         return False
     words = clean.split()
-    if len(words) > 6 or len(words) < 1:
+    if not (1 <= len(words) <= 8):
         return False
-    if len(words) == 1 and lower in {"measure", "recommend", "act", "build", "ship", "deploy", "scale"}:
+    if len(words) == 1 and lower in GENERIC_SINGLE_WORD_HEADINGS:
         return False
     return True
 
@@ -273,12 +303,48 @@ class FactSynthesizer:
             if paras:
                 return paras[0], homepage, f"Homepage hero text: {paras[0][:200]}...", "content_heuristic", 0.70
 
-        # 5. From general brand storefront/landing pages (non-support, non-contact)
+        # 5. From brand landing/regional storefront pages (excluding blogs, stories, case studies, help articles, and single product stories)
+        NON_COMPANY_DESC_URL_KEYWORDS = (
+            "/stories/", "/journal/", "/blog/", "/news/", "/case-studies/", "/case-study/",
+            "/articles/", "/glossary/", "/careers/", "/author/", "/help/", "/support/", "/tags/", "/post/"
+        )
+        NON_COMPANY_DESC_PREFIXES = (
+            "field test:", "behind the design:", "the lab ", "learn how ", "explore the ",
+            "meet the ", "experience our next ", "article not found", "most orders ",
+            "eligible students ", "if your feet ", "whatever the reason"
+        )
+
+        candidate_landing_descriptions: List[Tuple[int, str, CrawledPage]] = []
         for p in pages:
-            if p.page_type not in ("faq", "contact") and p.meta_description and len(p.meta_description.strip()) > 25:
-                p_desc_lower = p.meta_description.lower()
-                if not any(g in p_desc_lower for g in ("customer service", "help center", "get help")):
-                    return p.meta_description.strip(), p, f"Landing page description: {p.meta_description[:200]}...", "meta_description", 0.75
+            if p.page_type in ("faq", "contact", "blog", "docs"):
+                continue
+            p_url_lower = (p.final_url or "").lower()
+            if any(k in p_url_lower for k in NON_COMPANY_DESC_URL_KEYWORDS):
+                continue
+            if not p.meta_description or len(p.meta_description.strip()) <= 25:
+                continue
+            p_desc = p.meta_description.strip()
+            p_desc_lower = p_desc.lower()
+            if any(g in p_desc_lower for g in ("customer service", "help center", "get help", "article not found")):
+                continue
+            if any(p_desc_lower.startswith(pfx) for pfx in NON_COMPANY_DESC_PREFIXES):
+                continue
+            # Must not be a single garment or model action story
+            if " goes on a journey" in p_desc_lower or "came to be" in p_desc_lower or "for overpronation" in p_desc_lower:
+                continue
+
+            score = 1
+            if any(v in p_desc_lower for v in ("delivers", "provides", "platform for", "leading", "helps businesses", "is an", "is the")):
+                score += 2
+            parsed_path = urlparse(p.final_url).path.strip("/")
+            if not parsed_path or len(parsed_path.split("/")) <= 2:
+                score += 1
+            candidate_landing_descriptions.append((score, p_desc, p))
+
+        if candidate_landing_descriptions:
+            candidate_landing_descriptions.sort(key=lambda x: x[0], reverse=True)
+            best_score, best_desc, best_page = candidate_landing_descriptions[0]
+            return best_desc, best_page, f"Landing page description: {best_desc[:200]}...", "meta_description", 0.75
 
         return None, None, None, "none", 0.0
 
@@ -477,6 +543,14 @@ class FactSynthesizer:
                             continue
                         if val_lower in AUDIENCE_DISALLOWED_WORDS:
                             continue
+                        if any(val_lower.endswith(w) for w in (
+                            " scale", " performance", " reliability", " efficiency", " speed",
+                            " security", " privacy", " reality", " future", " cloud", " between",
+                            " them", " moving", " devices", " screen"
+                        )):
+                            continue
+                        if any(quote in val for quote in ('"', '“', '”', 'caption:')):
+                            continue
                         words = set(re.findall(r"\b[a-zA-Z]+\b", val_lower))
                         if not words.intersection(AUDIENCE_ROLE_WORDS) and not any(k in val_lower for k in ("who want", "looking to", "those who")):
                             continue
@@ -563,19 +637,43 @@ class FactSynthesizer:
                 p_text = pm.group(0).strip()
                 # Check for scale/magnitude multipliers or revenue/funding terms immediately following the price
                 after_match = text[pm.end():pm.end() + 25].lower()
-                if re.match(r"^\s*(?:\.\d+)?\s*(?:million|billion|trillion|m\b|b\b|k\b|arr\b|series\b|valuation\b|funding\b|revenue\b)", after_match):
+                if re.match(r"^\s*(?:\.\d+)?\s*(?:million|billion|trillion|m\b|b\b|k\b|arr\b|series\b|valuation\b|funding\b|revenue\b|round\b|raised\b|prize|prizes|fine|fines|penalty|auction|saved|savings|seed)", after_match):
                     continue
 
                 snippet_start = max(0, pm.start() - 40)
                 snippet_end = min(len(text), pm.end() + 40)
                 snippet = text[snippet_start:snippet_end].replace("\n", " ").strip()
 
-                # On non-pricing pages, require explicit subscription unit or pricing tier keywords in context
+                # Reject explicit prize pools, fines, charity auctions, and funding announcements
+                if any(bad_kw in snippet.lower() for bad_kw in (
+                    "in prizes", "in prize", "prize pool", "seed round", "series a", "series b",
+                    "series c", "raised $", "raised a $", "invest $", "invests $", "fines of",
+                    "facing fines", "charity auction", "in fines", "tech costs by $"
+                )):
+                    continue
+
+                # On non-pricing pages, require explicit billing unit, usage rate, or pricing context keywords
                 if p.page_type != "pricing":
-                    has_sub_unit = any(unit in p_text.lower() for unit in ("/mo", "/month", "/yr", "/year", "/user", "/seat"))
+                    has_sub_unit = any(
+                        unit in p_text.lower() or unit in snippet.lower()
+                        for unit in (
+                            "/mo", "/month", "/yr", "/year", "/user", "/seat",
+                            "/credit", "/token", "/request", "/query", "/gb",
+                            "/license", "/agent", "/member", "/check",
+                            "per month", "per year", "per user", "per seat",
+                            "per credit", "per token", "per request", "per query",
+                            "per 1m", "per 1,000", "per license", "per agent",
+                            "per member", "per check"
+                        )
+                    )
                     has_pricing_context = any(
                         kw in snippet.lower()
-                        for kw in ("pricing", "plan", "plans", "tier", "subscription", "per month", "per year", "billed monthly", "billed annually", "starting at", "free tier", "$0")
+                        for kw in (
+                            "price:", "price :", "pricing", "plans", "plan",
+                            "tier", "subscription", "billed monthly", "billed annually",
+                            "starting at", "starts at", "free tier", "free plan",
+                            "$0", "€0", "£0", "one-time", "flat rate"
+                        )
                     )
                     if not (has_sub_unit or has_pricing_context):
                         continue
@@ -670,21 +768,47 @@ class FactSynthesizer:
 
             # External links for social media profiles
             for ext in (p.external_links or []):
+                ext_l = ext.lower().strip()
+                parsed_ext = urlparse(ext_l)
+                ext_path = parsed_ext.path.strip("/")
                 for platform in ("twitter.com", "x.com", "linkedin.com", "github.com", "youtube.com"):
-                    if platform in ext.lower() and "/share" not in ext.lower() and "/intent" not in ext.lower() and ext not in seen_socials:
-                        seen_socials.add(ext)
-                        facts.append(BrandFact(
-                            brand_id=self.brand_id,
-                            profile_version=self.profile_version,
-                            fact_type="contact_info",
-                            fact_value={"type": "social_profile", "platform": platform, "url": ext},
-                            source_page_id=p.id,
-                            source_url=p.final_url,
-                            evidence_snippet=f"Social link found: {ext}",
-                            extraction_method="social_link_heuristic",
-                            confidence=0.90,
-                            user_confirmed=False
-                        ))
+                    if platform in ext_l:
+                        # Share dialogs, intent, search queries, hashtags
+                        if any(bad in ext_l for bad in ("/share", "/intent", "search?", "/search", "/hashtag")):
+                            continue
+                        # YouTube: channel/user/c only, reject watch/shorts/embed
+                        if platform == "youtube.com" and any(bad in ext_l for bad in ("/watch", "/shorts", "/embed")):
+                            continue
+                        # LinkedIn: must be company or school profile, reject personal /in/ or post /posts/
+                        if platform == "linkedin.com" and not any(ext_l.startswith(f"https://www.linkedin.com/{k}") or ext_l.startswith(f"https://linkedin.com/{k}") for k in ("company/", "school/")):
+                            continue
+                        # Twitter/X: must have a path segment that is an account handle, reject empty path
+                        if platform in ("twitter.com", "x.com") and (not ext_path or "/" in ext_path):
+                            continue
+                        # GitHub: must be root organization/user, reject deep repo tree or blob links
+                        if platform == "github.com" and (not ext_path or "/" in ext_path):
+                            continue
+                        # On blog pages, reject social links that belong to individual authors/contributors rather than the company
+                        if p.page_type == "blog":
+                            brand_slug = self.user_business_name.lower().replace(" ", "")
+                            first_tok = self.user_business_name.lower().split()[0]
+                            if brand_slug not in ext_l and first_tok not in ext_l:
+                                continue
+
+                        if ext not in seen_socials:
+                            seen_socials.add(ext)
+                            facts.append(BrandFact(
+                                brand_id=self.brand_id,
+                                profile_version=self.profile_version,
+                                fact_type="contact_info",
+                                fact_value={"type": "social_profile", "platform": platform, "url": ext},
+                                source_page_id=p.id,
+                                source_url=p.final_url,
+                                evidence_snippet=f"Social link found: {ext}",
+                                extraction_method="social_link_heuristic",
+                                confidence=0.90,
+                                user_confirmed=False
+                            ))
 
     def _extract_languages(self, pages: List[CrawledPage], facts: List[BrandFact]) -> None:
         langs = {p.language for p in pages if p.language}

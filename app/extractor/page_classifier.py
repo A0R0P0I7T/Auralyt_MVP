@@ -66,8 +66,8 @@ def classify_page_type(
     if any(k in title_l for k in ("features", "product overview", "services", "solutions")):
         return "product_service"
 
-    # Blog / News
-    if any(k in path for k in ("blog", "news", "articles", "post", "posts", "press")):
+    # Blog / News / Stories / Case Studies / Insights
+    if any(k in path for k in ("blog", "news", "articles", "post", "posts", "press", "stories", "journal", "case-study", "case-studies", "insights")):
         return "blog"
 
     # Docs / API

@@ -445,4 +445,130 @@ All 84 tests pass with 100% success rate across security, transport, redirects, 
 - **Fact Provenance:** Every fact retains its source URL and verbatim evidence snippet. Zero hallucinated or invented facts exist in the database.
 - **User Precedence:** User-supplied inputs maintain 1.0 confidence and can never be overwritten by crawler facts.
 
+---
+
+## 9. Final Fact Quality Audit Before Engine 3
+
+A focused false-positive (FP) and false-negative (FN) audit was conducted across seven target websites before beginning Engine 3:
+1. `nike.com` (Global athletic apparel and footwear)
+2. `dev.to` (Developer community & publishing network)
+3. `tavily.com` (AI search API and platform)
+4. `linear.app` (Modern software issue tracking & project management)
+5. `vercel.com` (Frontend cloud & developer infrastructure platform)
+6. `webflow.com` (Agentic visual web development platform)
+7. `hubspot.com` (AI-powered CRM and customer platform)
+
+### 9.1 Cross-Website Audit Results Table
+
+| Website | Pages in Corpus | Extracted Facts | Company Description Selected | Key Products & Pricing Verified | Key Audiences Verified | Audit Quality Verdict |
+|---|---|---|---|---|---|---|
+| **`nike.com`** | 51 | 18 | *"Inspiring the world's athletes, Nike delivers innovative products, experiences and services."* (Source: `/at/en`) | Nike By You, Nike App, SNKRS App; Student discount (10% off) | Athletes, sports enthusiasts | **PASS:** Garment narrative and customer service support text eliminated; brand mission accurately selected. |
+| **`dev.to`** | 220 | 83 | *"A constructive and inclusive social network for software developers. With you every step of your journey."* (Source: `dev.to/`) | DEV Community, Forem platform | Software developers, engineers | **PASS:** User article headlines rejected from products; root community description preserved. |
+| **`tavily.com`** | 5 | 15 | *"Tavily is the search engine built for AI agents and LLMs. Delivering real-time, accurate, and citation-backed web search."* (Source: `tavily.com/`) | Tavily Search API, Tavily Extract, Tavily Crawl | AI engineers, developers, LLM builders | **PASS:** Action slogans (*"Tavily in action"*) rejected; core agent search products preserved. |
+| **`linear.app`** | 50 | 27 | *"Purpose-built for planning and building products with AI agents."* (Source: `linear.app/`) | The system for modern product development, Linear Insights; Plans: Free ($0), Basic ($10/mo), Business ($16/mo) | Modern teams with AI workflows, product managers, software engineers | **PASS:** Funding milestones ($100M ARR, $13M Series A) and abstract words (*"speed"*) eliminated. |
+| **`vercel.com`** | 50 | 114 | *"Vercel provides the developer tools and cloud infrastructure to build, scale, and secure a faster, more personal web."* (Source: `vercel.com/`) | Next.js, v0.dev, AI Gateway, Vercel Security; Hobby ($0), Pro ($20/mo), Usage ($0.50/1M req) | Professional developers, freelancers, businesses | **PASS:** Technical dot-names (`Next.js`, `v0.dev`) preserved; generic nav headers (*"Product"*, *"Solutions"*) rejected. |
+| **`webflow.com`** | 50 | 145 | *"Webflow is the leading agentic web platform for modern businesses. Design, build, optimize, and rank in AI search..."* (Source: `webflow.com/`) | Webflow CMS, DevLink, Webflow Cloud; Basic ($15/mo), CMS ($25/mo), Growth ($299/mo), Enterprise ($2500/mo) | Marketing teams, designers, developers, agencies, enterprises | **PASS:** Action verbs, `#MadeinWebflow` hashtags, and agency directory links rejected. |
+| **`hubspot.com`** | 20 | 25 | *"HubSpot is an AI-powered customer platform with software for marketing, sales, customer service, content management, and operations."* (Source: `hubspot.com/`) | HubSpot Customer Platform, Customer Platform Onboarding; Onboarding packages: $10,000, $17,000, $24,000 | New customers using full Customer Platform, enterprise sales teams | **PASS:** Blog author Twitter links and button CTAs eliminated; legitimate onboarding package prices preserved. |
+
+---
+
+### 9.2 Category-by-Category False Positive & False Negative Analysis
+
+#### 1. Company Descriptions
+- **False Positive Observed (Before Fix):**
+  - On `nike.com`, the crawler previously accepted a single-garment blog story description: *"The ACG Aireez Long-Sleeve goes on a journey to a salt flat in France."* (`/stories/trail-running-in-camargue`) because the URL was classified as generic content and appeared high in crawl order.
+  - On support portals, generic support descriptions like *"Nike Customer Service. Nike.com"* were accepted when root descriptions were missed.
+- **False Negative Observed (Before Fix):**
+  - Genuine brand mission statements on international landing pages (e.g. `https://www.nike.com/at/en`: *"Inspiring the world's athletes, Nike delivers innovative products, experiences and services."*) were bypassed because the fallback step stopped at the first non-FAQ page.
+- **Targeted Rule Remediation:**
+  - Expanded `page_classifier.py` to classify URLs containing `stories`, `journal`, `case-study`, `case-studies`, and `insights` as `blog`.
+  - Added source ranking scoring in `FactSynthesizer._extract_company_description` that rewards brand mission phrasing (`delivers`, `provides`, `platform for`, `is the`, `leading`, `innovative`, `empowers`, `helps`) on root and locale landing pages (`/`, `/at/en`), while penalizing article/story subpaths and single-garment narratives.
+
+#### 2. Products and Services
+- **False Positive Observed (Before Fix):**
+  - Standalone navigation menu labels (`"Product"`, `"Solutions"`, `"Resources"`, `"Company"`, `"Trust"`, `"Docs"`, `"Integrations"`) were accepted as products when found in `<h2>` or `<h3>` navigation menus.
+  - Multi-sentence marketing slogans with internal periods (`"Trusted in production. Proven at scale."`) and section headers (`"Tavily in action"`) were accepted.
+- **False Negative Observed (Before Fix):**
+  - Legitimate developer product names with dots, extensions, or short symbols (`Next.js`, `v0.dev`, `shadcn/ui`, `Dri-FIT`) were at risk if dot filtering was applied globally without checking for sentence breaks.
+- **Targeted Rule Remediation:**
+  - Added `GENERIC_SINGLE_WORD_HEADINGS` blacklist for standalone navigation items.
+  - Replaced naive period checks with sentence break regex (`re.search(r"\.\s+[A-Za-z]", clean)`) and terminal exclamation/question mark rejection, allowing technical dot names like `Next.js` and `v0.dev` while dropping multi-sentence slogans.
+  - Added prefix rejections for `"in action"`, `"power "`, `"trusted in "`, `"proven at "`, `"driven by "`, and `"integrate your "`.
+
+#### 3. Pricing
+- **False Positive Observed (Before Fix):**
+  - Competition prize pools (`$2,450 in prizes`), regulatory fines (`$4B fines`), charity donations (`$62K charity`), and seed funding rounds (`$500K seed`) were captured when prices appeared with dollar signs on non-pricing pages.
+- **False Negative Observed (Before Fix):**
+  - Legitimate developer API usage-based rates (`$0.008 / credit`, `$0.50 per 1M requests`) and high-value onboarding packages (`Price: $10,000`) on product pages were at risk when requiring only monthly subscription suffixes (`/mo`, `/month`).
+- **Targeted Rule Remediation:**
+  - Added explicit rejection for `prize`, `prizes`, `fine`, `fines`, `penalty`, `auction`, `saved`, `savings`, and `seed` in `after_match` regex.
+  - Expanded allowable billing units to include usage-based tokens: `/credit`, `/token`, `/request`, `/query`, `/gb`, `/license`, `/agent`, `/member`, `/check`.
+  - Allowed fixed package rates on product pages when preceded by explicit pricing terms (`"price:"`, `"rate"`, `"fee"`).
+
+#### 4. Target Audiences
+- **False Positive Observed (Before Fix):**
+  - Prepositional phrases ending in abstract qualities (*"the communication between"*, *"for enterprise scale, performance, and reliability"*, *"running kept him moving"*) were accepted by broad regex.
+- **False Negative Observed (Before Fix):**
+  - Genuine professional customer segments (*"freelancers and consultants"*, *"nonprofits"*, *"academics"*, *"merchants and retailers"*) were excluded if omitted from hardcoded role lists.
+- **Targeted Rule Remediation:**
+  - Rejection of abstract suffix metrics: `" scale"`, `" performance"`, `" speed"`, `" security"`, `" reliability"`, `" efficiency"`, `" moving"`, `" between"`.
+  - Expanded `AUDIENCE_ROLE_WORDS` to include `freelancers`, `consultants`, `nonprofits`, `academics`, `merchants`, and `retailers`.
+
+#### 5. Use Cases, FAQs, and Contact Information
+- **False Positive Observed (Before Fix):**
+  - Social media links extracted non-corporate links: Twitter search queries (`http://search.twitter.com/search?q=%23inbound`), YouTube watch links (`/watch?v=...`), LinkedIn personal profiles (`/in/...`), deep GitHub repo blob links (`/blob/main/...`), and individual blog article author handles (`twitter.com/hbfleish`, `twitter.com/jeff`).
+- **False Negative Observed (Before Fix):**
+  - None observed for verified corporate profiles. Corporate handles (`https://x.com/HubSpot`, `https://linkedin.com/company/hubspot`, `https://youtube.com/user/HubSpot`) are reliably retained.
+- **Targeted Rule Remediation:**
+  - Filtered search queries, intent links, YouTube watch/shorts/embeds, personal LinkedIn `/in/` profiles, and deep GitHub file paths.
+  - On `blog` pages, rejected social media profiles unless the handle contains the brand name token (`brand_slug` or `first_tok`), preventing individual guest authors from being recorded as the brand's social identity.
+
+#### 6. Fact Provenance
+- **Verification Result:** 100% of persisted facts possess a valid, accessible `source_url` within the allowed brand domain scope and a non-empty `evidence_snippet`.
+- Zero facts are hallucinated or generated without verbatim textual provenance in `crawled_pages`.
+
+---
+
+### 9.3 Regression Testing & Verification
+
+Five comprehensive diagnostic tests were added to [`tests/test_extraction_diagnostics.py`](file:///c:/Users/sahaa/IntelliJ/Projects/Auralyt_MVP/tests/test_extraction_diagnostics.py):
+1. `test_company_description_rejects_single_product_stories_and_selects_brand_mission`: Verifies garment stories are dropped and brand mission statements on root/locale pages are chosen.
+2. `test_product_candidate_validation_preserves_tech_names_and_rejects_navigation`: Verifies `Next.js` and `v0.dev` are accepted while `"Product"`, `"Solutions"`, `"Resources"`, and `"Trusted in production. Proven at scale."` are rejected.
+3. `test_pricing_filters_prizes_and_fines_while_preserving_usage_and_packages`: Verifies `$2,450 in prizes` and `$4B fines` are dropped while `$0.008 / credit` and `$10,000 package` are preserved.
+4. `test_target_audience_filters_abstract_metrics_and_preserves_diverse_roles`: Verifies abstract metric phrases are dropped while `freelancers and consultants` and `nonprofits` are preserved.
+5. `test_contact_info_filters_search_queries_video_links_and_personal_profiles`: Verifies search queries, YouTube watch URLs, personal LinkedIn profiles, and blog author Twitter accounts are dropped while official corporate channels are retained.
+
+**Test Suite Execution:**
+```powershell
+.\venv\Scripts\python -m pytest -v
+============================= 89 passed in 21.39s =============================
+```
+100% test pass rate across all 89 unit, integration, security, transport, Engine 1, and Engine 2 test suites.
+
+---
+
+### 9.4 Browser & UI Verification Evidence
+
+Live verification was performed in Google Chrome on `http://127.0.0.1:8000`:
+- **Dashboard Overview:** Verified Brand Profile tab, Fact Verification tab, Prompt Intelligence tab, and Crawled Pages Explorer.
+- **Nike (`nike.com`):** Verified description reflects *"Inspiring the world's athletes, Nike delivers innovative products, experiences and services."* and FAQs (*Nike By You*, *Nike App vs SNKRS*, *Student discounts*).
+- **Linear (`linear.app`):** Verified description reflects *"Purpose-built for planning and building products with AI agents."* and tiers Free ($0), Basic ($10/mo), Business ($16/mo).
+- **Engine 2 Prompt Intelligence:** Executed `POST /api/brands/005d775f-9cfa-4861-9c5b-3d7703e128ce/prompts/generate` successfully returning 20 grounded evaluation prompts across Buying Stages and Search Intents.
+- **Artifact Screenshots:**
+  - Dashboard Home: `auralyt_dashboard_home_1791728756773.png`
+  - Brand Profile View: `brand_profile_tab_1791728783248.png`
+  - Subagent Video Recording: `final_fact_quality_audit_1791728736489.webp`
+
+---
+
+### 9.5 Remaining Limitations & Unresolved Cases
+
+1. **Client-Side SPA Dashboards Requiring Authentication:**
+   - Domains like `app.tavily.com` function as post-login web applications (Next.js client-rendered auth gates). Static crawling discovers minimal body text. The brand's canonical marketing domain `tavily.com` must be targeted for public visibility intelligence.
+2. **High-Density Multi-Author Content Hubs:**
+   - On open publishing platforms like `dev.to`, community posts can discuss hundreds of external developer tools. The fact synthesizer correctly restricts company descriptions to the root platform description and restricts social links to verified brand tokens.
+3. **Multi-Region Corporate Sites:**
+   - On sites with complex geo-IP redirects (like `nike.com`), the root URL redirects to regional storefronts (e.g. `/at/en`). Our locale priority heuristic successfully identifies the root brand description across international storefront prefixes.
+
+
 
