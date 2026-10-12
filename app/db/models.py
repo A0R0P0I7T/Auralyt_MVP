@@ -52,6 +52,7 @@ class ProfileRun(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    profile_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False, index=True)
 
     page_limit: Mapped[int] = mapped_column(Integer, default=30)
     pages_discovered: Mapped[int] = mapped_column(Integer, default=0)
@@ -62,10 +63,15 @@ class ProfileRun(Base):
 
     warnings: Mapped[List[str]] = mapped_column(JSON, default=list)
     error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    crawl_summary: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, nullable=True)
 
     # Relationships
     brand: Mapped["Brand"] = relationship("Brand", back_populates="runs")
     pages: Mapped[List["CrawledPage"]] = relationship("CrawledPage", back_populates="profile_run", cascade="all, delete-orphan")
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("profile_version", 1)
+        super().__init__(**kwargs)
 
 
 class CrawledPage(Base):
@@ -108,6 +114,7 @@ class BrandFact(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     brand_id: Mapped[str] = mapped_column(String(36), ForeignKey("brands.id", ondelete="CASCADE"), nullable=False, index=True)
     profile_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    fact_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True, index=True)
 
     # fact_type: business_name, industry, company_description, product_service, product_feature, target_audience, use_case, pricing, differentiator, faq, contact_info, supported_language
     fact_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -116,9 +123,15 @@ class BrandFact(Base):
     source_page_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("crawled_pages.id", ondelete="SET NULL"), nullable=True)
     source_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     evidence_snippet: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    supporting_evidence: Mapped[List[dict]] = mapped_column(JSON, default=list)
     extraction_method: Mapped[str] = mapped_column(String(64), default="deterministic", nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     user_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    is_rejected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    is_superseded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    is_stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -130,6 +143,14 @@ class BrandFact(Base):
     __table_args__ = (
         Index("ix_brand_facts_type_brand", "brand_id", "fact_type"),
     )
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("is_rejected", False)
+        kwargs.setdefault("user_confirmed", False)
+        kwargs.setdefault("is_superseded", False)
+        kwargs.setdefault("is_stale", False)
+        kwargs.setdefault("supporting_evidence", [])
+        super().__init__(**kwargs)
 
 
 class PromptRun(Base):
@@ -289,4 +310,3 @@ class VisibilityResult(Base):
         Index("ix_visibility_results_brand_and_mention", "brand_id", "brand_mentioned"),
         Index("ix_visibility_results_scan_prompt", "scan_id", "prompt_id"),
     )
-

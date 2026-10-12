@@ -109,10 +109,24 @@ class VisibilityEvaluatorService:
                     logger.info(f"Returning active visibility scan '{existing_active.id}' for brand '{brand_id}' (idempotent)")
                     return existing_active
 
-            # Select approved, non-archived Engine 2 prompts matching brand profile version
+            # Pin the scan to the latest completed prompt/profile snapshot. A brand
+            # refresh can increment Brand.profile_version before it completes.
+            version_stmt = select(PromptCandidate.profile_version).where(
+                PromptCandidate.brand_id == brand_id,
+                PromptCandidate.is_approved == True,
+                PromptCandidate.is_archived == False,
+            ).order_by(PromptCandidate.profile_version.desc(), PromptCandidate.created_at.desc()).limit(1)
+            version_res = await db.execute(version_stmt)
+            scan_version = version_res.scalar_one_or_none()
+            if scan_version is None:
+                raise ValueError(
+                    "Brand has no approved prompts. Please generate and approve prompts in Engine 2 before scanning."
+                )
+
+            # Select approved, non-archived Engine 2 prompts matching that version.
             stmt = select(PromptCandidate).where(
                 PromptCandidate.brand_id == brand_id,
-                PromptCandidate.profile_version == brand.profile_version,
+                PromptCandidate.profile_version == scan_version,
                 PromptCandidate.is_approved == True,
                 PromptCandidate.is_archived == False
             ).order_by(desc(PromptCandidate.quality_score))
@@ -148,7 +162,7 @@ class VisibilityEvaluatorService:
             # Create scan record
             scan = VisibilityScan(
                 brand_id=brand.id,
-                profile_version=brand.profile_version,
+                profile_version=scan_version,
                 status="pending",
                 provider=active_provider.provider_name,
                 model_name=selected_model,

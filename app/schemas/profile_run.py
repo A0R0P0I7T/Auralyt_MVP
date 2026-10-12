@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -12,6 +12,7 @@ class ProfileRunResponse(BaseModel):
 
     id: str
     brand_id: str
+    profile_version: int
     status: str
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -24,4 +25,4 @@ class ProfileRunResponse(BaseModel):
     pages_failed: int
     warnings: List[str]
     error_summary: Optional[str] = None
-
+    crawl_summary: Optional[Dict[str, Any]] = None

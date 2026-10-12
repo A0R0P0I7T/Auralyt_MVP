@@ -19,6 +19,23 @@ async def lifespan(app: FastAPI):
     setup_logging(debug=settings.DEBUG)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Keep existing SQLite deployments restart-safe until Alembic is run.
+        # Each statement is isolated because older databases may have a subset.
+        from sqlalchemy import text
+        for statement in (
+            "ALTER TABLE profile_runs ADD COLUMN profile_version INTEGER DEFAULT 1 NOT NULL",
+            "ALTER TABLE brand_facts ADD COLUMN fact_key VARCHAR(512)",
+            "ALTER TABLE brand_facts ADD COLUMN supporting_evidence JSON",
+            "ALTER TABLE brand_facts ADD COLUMN is_rejected BOOLEAN DEFAULT 0 NOT NULL",
+            "ALTER TABLE brand_facts ADD COLUMN is_superseded BOOLEAN DEFAULT 0 NOT NULL",
+            "ALTER TABLE brand_facts ADD COLUMN is_stale BOOLEAN DEFAULT 0 NOT NULL",
+            "ALTER TABLE brand_facts ADD COLUMN last_seen_at DATETIME",
+            "ALTER TABLE brand_facts ADD COLUMN superseded_at DATETIME",
+        ):
+            try:
+                await conn.execute(text(statement))
+            except Exception:
+                pass
     # Reconcile any orphaned/interrupted Engine 3 visibility scans
     from app.evaluator.service import VisibilityEvaluatorService
     await VisibilityEvaluatorService.reconcile_interrupted_scans()

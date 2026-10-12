@@ -63,7 +63,9 @@ class PromptIntelligenceService:
                     "Please complete website profiling first."
                 )
 
-            current_version = brand.profile_version
+            # The mutable brand counter may point at a pending/failed refresh.
+            # Generate only from the completed snapshot returned by Engine 1.
+            current_version = normalized_profile.profile_version
 
             # 4. Check for cached generation if not force_regenerate
             if not force_regenerate:
