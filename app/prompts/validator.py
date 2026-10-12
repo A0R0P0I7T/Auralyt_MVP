@@ -51,6 +51,42 @@ class PromptValidator:
             known_entities.add(u.lower())
 
         cat = candidate.category
+        fact_by_id = {fact.id: fact for fact in profile.facts if fact.id}
+        unknown_fact_ids = set(candidate.provenance_fact_ids) - set(fact_by_id)
+        if unknown_fact_ids:
+            return False, "Prompt references fact IDs outside the active profile snapshot."
+
+        grounded_categories = {
+            "product_evaluation": {"product_service", "product_feature"},
+            "audience_specific": {"target_audience"},
+            "use_cases": {"use_case"},
+            "pricing_value": {"pricing"},
+            "brand_research": {"differentiator"},
+        }
+        required_types = grounded_categories.get(cat, set())
+        if required_types and any(f.fact_type in required_types for f in profile.facts):
+            if not candidate.provenance_fact_ids:
+                return False, f"Category '{cat}' requires provenance from the active profile facts."
+            if not any(fact_by_id[fid].fact_type in required_types for fid in candidate.provenance_fact_ids):
+                return False, f"Category '{cat}' is not grounded by a relevant fact type."
+
+        if candidate.target_product_service and candidate.target_product_service not in profile.products_and_services:
+            return False, "Prompt references a product outside the active profile."
+        if candidate.target_audience and candidate.target_audience not in profile.target_audiences:
+            return False, "Prompt references an audience outside the active profile."
+
+        if candidate.grounding_evidence:
+            known_evidence = {
+                fact.evidence_snippet for fact in profile.facts if fact.evidence_snippet
+            }
+            known_evidence.update(
+                evidence.get("snippet")
+                for fact in profile.facts
+                for evidence in fact.supporting_evidence
+                if evidence.get("snippet")
+            )
+            if not set(candidate.grounding_evidence).issubset(known_evidence):
+                return False, "Prompt contains evidence not present in the active profile."
         if cat in ("brand_research", "product_evaluation", "comparisons", "recommendations"):
             # Brand or product must be mentioned
             if not any(entity in lowered for entity in known_entities):

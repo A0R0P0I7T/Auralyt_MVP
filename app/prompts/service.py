@@ -145,14 +145,23 @@ class PromptIntelligenceService:
                 final_candidates = scored_candidates[:prompt_count]
 
                 # 10. Stage F: Persistence
+                existing_text_stmt = select(PromptCandidate.normalized_text).where(
+                    PromptCandidate.brand_id == brand_id,
+                    PromptCandidate.profile_version == current_version,
+                )
+                existing_text_res = await db.execute(existing_text_stmt)
+                existing_texts = set(existing_text_res.scalars().all())
                 persisted_models: List[PromptCandidate] = []
                 for fc in final_candidates:
+                    normalized_text = normalize_prompt_text(fc.text)
+                    if normalized_text in existing_texts:
+                        continue
                     model = PromptCandidate(
                         brand_id=brand_id,
                         prompt_run_id=run.id,
                         profile_version=current_version,
                         text=fc.text,
-                        normalized_text=normalize_prompt_text(fc.text),
+                        normalized_text=normalized_text,
                         category=fc.category,
                         intent=fc.intent,
                         buying_stage=fc.buying_stage,
@@ -170,6 +179,7 @@ class PromptIntelligenceService:
                     )
                     db.add(model)
                     persisted_models.append(model)
+                    existing_texts.add(normalized_text)
 
                 # Update Run Status
                 duration = time.time() - start_time
@@ -221,7 +231,11 @@ class PromptIntelligenceService:
             if not brand:
                 raise ValueError("Brand not found.")
 
-            target_version = profile_version or brand.profile_version
+            if profile_version is not None:
+                target_version = profile_version
+            else:
+                current_profile = await ProfilerService.get_brand_profile_summary(brand_id, db)
+                target_version = (current_profile or {}).get("profile_version", brand.profile_version)
 
             base_query = select(PromptCandidate).where(
                 PromptCandidate.brand_id == brand_id,
@@ -343,7 +357,8 @@ class PromptIntelligenceService:
             if not brand:
                 raise ValueError("Brand not found.")
 
-            version = brand.profile_version
+            profile = await ProfilerService.get_brand_profile_summary(brand_id, db)
+            version = (profile or {}).get("profile_version", brand.profile_version)
 
             prompts_query = select(PromptCandidate).where(
                 PromptCandidate.brand_id == brand_id,

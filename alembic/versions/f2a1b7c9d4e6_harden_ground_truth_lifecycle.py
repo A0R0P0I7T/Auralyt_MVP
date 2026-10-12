@@ -26,6 +26,7 @@ def upgrade() -> None:
     op.add_column("brand_facts", sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("brand_facts", sa.Column("superseded_at", sa.DateTime(timezone=True), nullable=True))
     op.create_index("ix_brand_facts_fact_key", "brand_facts", ["fact_key"])
+    op.execute("UPDATE brand_facts SET supporting_evidence = '[]' WHERE supporting_evidence IS NULL")
 
 
 def downgrade() -> None:

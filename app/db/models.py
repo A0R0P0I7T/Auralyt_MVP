@@ -295,6 +295,8 @@ class VisibilityResult(Base):
 
     # citations: verified URLs or sources present in response or metadata
     citations: Mapped[List[str]] = mapped_column(JSON, default=list)
+    provider_citations: Mapped[List[str]] = mapped_column(JSON, default=list)
+    response_citations: Mapped[List[str]] = mapped_column(JSON, default=list)
 
     sentiment_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # -1.0 to 1.0
     visibility_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)   # 1-indexed position in recommendations

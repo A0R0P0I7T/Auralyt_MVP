@@ -31,6 +31,17 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE brand_facts ADD COLUMN is_stale BOOLEAN DEFAULT 0 NOT NULL",
             "ALTER TABLE brand_facts ADD COLUMN last_seen_at DATETIME",
             "ALTER TABLE brand_facts ADD COLUMN superseded_at DATETIME",
+            "ALTER TABLE visibility_results ADD COLUMN provider_citations JSON",
+            "ALTER TABLE visibility_results ADD COLUMN response_citations JSON",
+        ):
+            try:
+                await conn.execute(text(statement))
+            except Exception:
+                pass
+        for statement in (
+            "UPDATE brand_facts SET supporting_evidence = '[]' WHERE supporting_evidence IS NULL",
+            "UPDATE visibility_results SET provider_citations = '[]' WHERE provider_citations IS NULL",
+            "UPDATE visibility_results SET response_citations = '[]' WHERE response_citations IS NULL",
         ):
             try:
                 await conn.execute(text(statement))

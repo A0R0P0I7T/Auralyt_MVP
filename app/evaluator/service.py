@@ -143,12 +143,15 @@ class VisibilityEvaluatorService:
             if prompt_ids:
                 approved_map = {p.id: p for p in approved_prompts}
                 selected_prompts = []
+                seen_prompt_ids = set()
                 for pid in prompt_ids:
                     if pid not in approved_map:
                         raise ValueError(
                             f"Prompt '{pid}' is not approved or does not belong to brand '{brand.business_name}'."
                         )
-                    selected_prompts.append(approved_map[pid])
+                    if pid not in seen_prompt_ids:
+                        selected_prompts.append(approved_map[pid])
+                        seen_prompt_ids.add(pid)
             else:
                 selected_prompts = approved_prompts[:max_prompts]
 
@@ -219,13 +222,18 @@ class VisibilityEvaluatorService:
             prompt_ids = scan.config_metadata.get("prompt_ids", [])
 
             # Fetch prompts
-            stmt = select(PromptCandidate).where(PromptCandidate.id.in_(prompt_ids))
+            stmt = select(PromptCandidate).where(
+                PromptCandidate.id.in_(prompt_ids),
+                PromptCandidate.brand_id == scan.brand_id,
+                PromptCandidate.profile_version == scan.profile_version,
+            )
             res = await db.execute(stmt)
             prompts = res.scalars().all()
 
-            if not prompts:
+            if len(prompts) != len(set(prompt_ids)):
                 scan.status = "failed"
-                scan.error_summary = "Prompts selected for scan could not be loaded."
+                scan.prompts_failed = max(0, len(set(prompt_ids)) - len(prompts))
+                scan.error_summary = "Selected prompts no longer match the scan's brand or profile version."
                 scan.completed_at = utc_now()
                 await db.commit()
                 return
@@ -252,13 +260,17 @@ class VisibilityEvaluatorService:
                                 model_name=scan.model_name
                             )
                             last_resp = resp
-                            if resp.is_success:
+                            if resp.is_success and resp.text.strip():
+                                provider_metadata = dict(resp.metadata or {})
+                                if resp.grounding_citations:
+                                    provider_metadata["grounding_citations"] = list(resp.grounding_citations)
+                                resp.metadata = provider_metadata
                                 eval_res = VisibilityResponseEvaluator.evaluate(
                                     response_text=resp.text,
                                     brand_name=brand.business_name,
                                     brand_domain=brand.domain,
                                     known_competitors=None,
-                                    provider_metadata=resp.metadata
+                                    provider_metadata=provider_metadata
                                 )
                                 return prompt_obj, resp, eval_res
                             else:
@@ -319,6 +331,8 @@ class VisibilityEvaluatorService:
                         competitor_mentions=eval_res.competitor_mentions,
                         comparative_position=eval_res.comparative_position,
                         citations=eval_res.citations,
+                        provider_citations=eval_res.provider_citations,
+                        response_citations=eval_res.response_citations,
                         sentiment_score=eval_res.sentiment_score,
                         visibility_rank=eval_res.visibility_rank,
                         evaluation_reasoning=eval_res.evaluation_reasoning
@@ -383,9 +397,9 @@ class VisibilityEvaluatorService:
                 scan.average_position = avg_position
                 scan.visibility_score = score
             else:
-                scan.visibility_score = 0.0
-                scan.mention_rate = 0.0
-                scan.recommendation_rate = 0.0
+                scan.visibility_score = None
+                scan.mention_rate = None
+                scan.recommendation_rate = None
 
             if failed_count == 0:
                 scan.status = "completed"

@@ -87,11 +87,11 @@ class PromptScorer:
         relevance = min(1.0, relevance)
 
         # 2. Grounding Score (0.0 - 1.0)
-        grounding = 0.6
+        grounding = 0.0
         if candidate.provenance_fact_ids:
-            grounding += 0.3
+            grounding = 0.8
         if candidate.grounding_evidence:
-            grounding += 0.1
+            grounding += 0.2
         grounding = min(1.0, grounding)
 
         # 3. Intent Clarity (0.0 - 1.0)

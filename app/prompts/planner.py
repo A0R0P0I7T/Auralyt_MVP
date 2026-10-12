@@ -1,6 +1,6 @@
 """Stage B: Intent and Coverage Planning for Engine 2 Prompt Intelligence."""
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from app.prompts.models import NormalizedBrandProfile, CoveragePlan, PlannedPromptSlot
 
 logger = logging.getLogger(__name__)
@@ -153,17 +153,59 @@ class CoveragePlanner:
             values_list = cat_info["values"]
 
             for i in range(quota):
-                val = values_list[i % len(values_list)] if values_list else None
                 # Find matching fact IDs for provenance
                 matching_fact_ids = []
                 evidence_text = None
+                relevant_types = {
+                    "product": {"product_service", "product_feature"},
+                    "audience": {"target_audience"},
+                    "use_case": {"use_case"},
+                    "pricing": {"pricing"},
+                    "differentiator": {"differentiator", "company_description"},
+                    "industry": {"industry"},
+                    "category": {"industry", "business_name"},
+                    "brand": {"business_name", "company_description"},
+                }.get(cat_info["dimension"], set())
+                grounded_values = set()
+                if relevant_types:
+                    for fact in profile.facts:
+                        if fact.fact_type not in relevant_types:
+                            continue
+                        if isinstance(fact.fact_value, dict):
+                            fact_value = (
+                                fact.fact_value.get("name")
+                                or fact.fact_value.get("plan_name")
+                                or fact.fact_value.get("model")
+                                or fact.fact_value.get("segment")
+                                or fact.fact_value.get("claim")
+                                or fact.fact_value.get("title")
+                            )
+                        else:
+                            fact_value = fact.fact_value
+                        grounded_values.add(str(fact_value).lower())
+                if grounded_values:
+                    values_list = [
+                        value for value in values_list
+                        if str(value).lower() in grounded_values
+                    ] or values_list
+                val = values_list[i % len(values_list)] if values_list else None
                 for f in profile.facts:
-                    f_val_str = str(f.fact_value).lower()
-                    if val and str(val).lower() in f_val_str:
+                    if isinstance(f.fact_value, dict):
+                        f_val = (
+                            f.fact_value.get("name")
+                            or f.fact_value.get("plan_name")
+                            or f.fact_value.get("model")
+                            or f.fact_value.get("segment")
+                            or f.fact_value.get("claim")
+                            or f.fact_value.get("title")
+                        )
+                    else:
+                        f_val = f.fact_value
+                    f_val_str = str(f_val).lower()
+                    if f.fact_type in relevant_types and val and str(val).lower() in f_val_str:
                         if f.id:
                             matching_fact_ids.append(f.id)
-                        evidence_text = f.evidence_snippet
-                        break
+                        evidence_text = evidence_text or f.evidence_snippet
 
                 slot = PlannedPromptSlot(
                     category=cat_name,

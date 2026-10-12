@@ -11,6 +11,7 @@ class GroundedFact(BaseModel):
     user_confirmed: bool = False
     source_url: Optional[str] = None
     evidence_snippet: Optional[str] = None
+    supporting_evidence: List[Dict[str, Any]] = []
 
 
 class NormalizedBrandProfile(BaseModel):

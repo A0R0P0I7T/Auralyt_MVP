@@ -22,6 +22,8 @@ class EvaluationResult(BaseModel):
     competitor_mentions: List[str] = Field(default_factory=list)
     comparative_position: str = "unknown"   # leader, recommended_alternative, contender, mentioned_only, unfavorable, not_mentioned, unknown
     citations: List[str] = Field(default_factory=list)
+    provider_citations: List[str] = Field(default_factory=list)
+    response_citations: List[str] = Field(default_factory=list)
     sentiment_score: Optional[float] = None # -1.0 to 1.0
     visibility_rank: Optional[int] = None   # 1-indexed list position
     evaluation_reasoning: str = ""
@@ -98,7 +100,13 @@ class VisibilityResponseEvaluator:
 
         # 1. Target Brand Mention Check
         name_clean = brand_name.strip()
-        domain_clean = brand_domain.split(":")[0].replace("www.", "").strip()
+        if not name_clean:
+            res.evaluation_reasoning = "Target brand identity is missing; mention classification is unavailable."
+            res.recommendation_status = "unknown"
+            res.comparative_position = "unknown"
+            return res
+        parsed_domain = urlparse(brand_domain if "://" in brand_domain else f"https://{brand_domain}")
+        domain_clean = (parsed_domain.hostname or brand_domain).replace("www.", "").strip().lower()
         domain_host = domain_clean.split(".")[0]
 
         # Regex for word-boundary brand mention
@@ -275,12 +283,15 @@ class VisibilityResponseEvaluator:
                 pass
             return None
 
-        # URLs in provider metadata (e.g. Google Gemini groundingMetadata)
+        # URLs in provider metadata are kept distinct from URLs merely quoted
+        # in response text. Both remain available in the backward-compatible
+        # combined `citations` field.
+        provider_citations = set()
         if provider_metadata:
             for g_url in provider_metadata.get("grounding_citations", []):
                 valid_u = _clean_and_validate_url(g_url)
                 if valid_u:
-                    extracted_urls.add(valid_u)
+                    provider_citations.add(valid_u)
 
         # Markdown links: [Title](https://...)
         md_links = re.findall(r"\[([^\]]+)\]\((https?://[^\)]+)\)", text)
@@ -296,7 +307,9 @@ class VisibilityResponseEvaluator:
             if valid_u:
                 extracted_urls.add(valid_u)
 
-        res.citations = sorted(list(extracted_urls))
+        res.provider_citations = sorted(provider_citations)
+        res.response_citations = sorted(extracted_urls)
+        res.citations = sorted(provider_citations | extracted_urls)
 
         return res
 

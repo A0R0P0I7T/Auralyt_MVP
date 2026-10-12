@@ -37,6 +37,8 @@ class VisibilityResultResponse(BaseModel):
     competitor_mentions: List[str] = Field(default_factory=list)
     comparative_position: str
     citations: List[str] = Field(default_factory=list)
+    provider_citations: List[str] = Field(default_factory=list)
+    response_citations: List[str] = Field(default_factory=list)
     sentiment_score: Optional[float] = None
     visibility_rank: Optional[int] = None
     evaluation_reasoning: Optional[str] = None
