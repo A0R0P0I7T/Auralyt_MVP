@@ -3,6 +3,7 @@
 ## Baseline
 
 - Starting commit: `d5d5f94`
+- Focused implementation commit: `3177372`
 - Starting worktree: pre-existing unstaged Engine 1/crawler/extractor/frontend audit changes and untracked cross-site audit tests were preserved and not staged.
 - Baseline: `145 passed`.
 - Final audited suite: `151 passed`.
