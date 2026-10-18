@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.db.models import PromptRun
+from app.db.models import PromptRun, PromptCandidate, User, Organization
 from app.schemas.prompt import (
     PromptGenerateRequest,
     PromptRunResponse,
@@ -15,6 +15,7 @@ from app.schemas.prompt import (
     PromptCoverageSummary,
 )
 from app.prompts.service import PromptIntelligenceService
+from app.auth.dependencies import get_current_user, get_current_org, verify_brand_access
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,16 @@ router = APIRouter(tags=["Engine 2: Prompt Intelligence"])
 async def generate_prompts(
     brand_id: str,
     payload: PromptGenerateRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Consumes Engine 1's ground-truth profile and generates a structured,
     grounded collection of evaluation prompts across search intents and buying stages.
     """
+    await verify_brand_access(brand_id, db, current_org)
+
     try:
         run, prompts = await PromptIntelligenceService.generate_prompts(
             brand_id=brand_id,
@@ -45,6 +50,7 @@ async def generate_prompts(
             force_regenerate=payload.force_regenerate,
             db=db
         )
+        diagnostics = (run.config_metadata or {}).get("diagnostics", {})
         return {
             "message": "Prompt intelligence generation completed successfully.",
             "run_id": run.id,
@@ -52,6 +58,7 @@ async def generate_prompts(
             "status": run.status,
             "prompts_generated": len(prompts),
             "profile_version": run.profile_version,
+            "diagnostics": diagnostics,
             "run_check_url": f"/api/brands/{brand_id}/prompts/runs/{run.id}",
             "prompts_url": f"/api/brands/{brand_id}/prompts"
         }
@@ -76,8 +83,12 @@ async def generate_prompts(
 async def get_prompt_run(
     brand_id: str,
     run_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
+    await verify_brand_access(brand_id, db, current_org)
+
     run = await db.get(PromptRun, run_id)
     if not run or run.brand_id != brand_id:
         raise HTTPException(status_code=404, detail="Prompt run not found.")
@@ -99,8 +110,12 @@ async def list_brand_prompts(
     profile_version: Optional[int] = Query(None, description="Filter by specific profile version"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
+    await verify_brand_access(brand_id, db, current_org)
+
     try:
         res = await PromptIntelligenceService.list_prompts(
             brand_id=brand_id,
@@ -128,8 +143,12 @@ async def list_brand_prompts(
 )
 async def get_prompt_coverage(
     brand_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
+    await verify_brand_access(brand_id, db, current_org)
+
     try:
         data = await PromptIntelligenceService.get_coverage_summary(brand_id, db)
         return PromptCoverageSummary(**data)
@@ -146,11 +165,16 @@ async def get_prompt_coverage(
 )
 async def get_prompt_detail(
     prompt_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
     prompt = await PromptIntelligenceService.get_prompt(prompt_id, db)
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found.")
+
+    # Enforce tenant boundary on associated brand
+    await verify_brand_access(prompt.brand_id, db, current_org)
     return prompt
 
 
@@ -162,15 +186,25 @@ async def get_prompt_detail(
 async def update_prompt(
     prompt_id: str,
     payload: PromptUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    prompt = await PromptIntelligenceService.update_prompt(
-        prompt_id=prompt_id,
-        text=payload.text,
-        is_approved=payload.is_approved,
-        is_archived=payload.is_archived,
-        db=db
-    )
+    prompt = await PromptIntelligenceService.get_prompt(prompt_id, db)
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found.")
-    return prompt
+
+    # Enforce tenant boundary on associated brand
+    await verify_brand_access(prompt.brand_id, db, current_org)
+
+    try:
+        updated = await PromptIntelligenceService.update_prompt(
+            prompt_id=prompt_id,
+            text=payload.text,
+            is_approved=payload.is_approved,
+            is_archived=payload.is_archived,
+            db=db
+        )
+        return updated
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))

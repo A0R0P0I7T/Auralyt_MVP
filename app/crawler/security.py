@@ -52,8 +52,11 @@ BLOCKED_HOSTNAMES = {
 # Tracking query parameters to strip during normalization
 TRACKING_PARAMS = {
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_reader", "utm_place", "utm_userid",
     "fbclid", "gclid", "gclsrc", "dclid", "zanpid", "msclkid",
-    "mc_cid", "mc_eid", "_ga", "_gl", "yclid", "wickedid"
+    "mc_cid", "mc_eid", "_ga", "_gl", "yclid", "wickedid",
+    "ref_src", "ref_url", "trk", "trkinfo", "campaign",
+    "campaign_id", "affiliate", "session_id", "spm", "pos"
 }
 
 

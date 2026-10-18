@@ -40,6 +40,8 @@ class ProfileNormalizer:
         raw_facts = data.get("facts", [])
         grounded_facts: List[GroundedFact] = []
         for rf in raw_facts:
+            if bool(_get_attr_or_key(rf, "is_rejected", False)):
+                continue
             g_fact = GroundedFact(
                 id=_get_attr_or_key(rf, "id"),
                 fact_type=_get_attr_or_key(rf, "fact_type", "unknown"),
@@ -47,7 +49,9 @@ class ProfileNormalizer:
                 confidence=float(_get_attr_or_key(rf, "confidence", 1.0) or 1.0),
                 user_confirmed=bool(_get_attr_or_key(rf, "user_confirmed", False)),
                 source_url=_get_attr_or_key(rf, "source_url"),
-                evidence_snippet=_get_attr_or_key(rf, "evidence_snippet") or _get_attr_or_key(rf, "provenance")
+                evidence_snippet=_get_attr_or_key(rf, "evidence_snippet") or _get_attr_or_key(rf, "provenance"),
+                supporting_evidence=_get_attr_or_key(rf, "supporting_evidence", []) or [],
+                extraction_method=_get_attr_or_key(rf, "extraction_method", "unknown")
             )
             grounded_facts.append(g_fact)
 
@@ -67,8 +71,16 @@ class ProfileNormalizer:
         products: List[str] = []
         for p in raw_prods:
             if isinstance(p, dict):
-                p_name = p.get("name") or p.get("title") or p.get("product_service")
-                if p_name and isinstance(p_name, str) and p_name not in products:
+                if bool(_get_attr_or_key(p, "is_rejected", False)):
+                    continue
+                p_val = p.get("value", p) if "value" in p else p
+                if isinstance(p_val, dict):
+                    p_name = p_val.get("name") or p_val.get("title") or p_val.get("product_service")
+                elif isinstance(p_val, str):
+                    p_name = p_val
+                else:
+                    p_name = None
+                if p_name and isinstance(p_name, str) and p_name.strip() not in products:
                     products.append(p_name.strip())
             elif isinstance(p, str) and p.strip() not in products:
                 products.append(p.strip())
@@ -79,7 +91,7 @@ class ProfileNormalizer:
                 if f.fact_type in ("product_service", "product_feature"):
                     val = f.fact_value
                     name = val.get("name") if isinstance(val, dict) else str(val)
-                    if name and name not in products:
+                    if name and name.strip() not in products:
                         products.append(name.strip())
 
         # 3. Target Audiences
@@ -87,8 +99,16 @@ class ProfileNormalizer:
         audiences: List[str] = []
         for a in raw_audiences:
             if isinstance(a, dict):
-                a_name = a.get("segment") or a.get("audience") or a.get("target_audience")
-                if a_name and isinstance(a_name, str) and a_name not in audiences:
+                if bool(_get_attr_or_key(a, "is_rejected", False)):
+                    continue
+                a_val = a.get("value", a) if "value" in a else a
+                if isinstance(a_val, dict):
+                    a_name = a_val.get("segment") or a_val.get("audience") or a_val.get("target_audience")
+                elif isinstance(a_val, str):
+                    a_name = a_val
+                else:
+                    a_name = None
+                if a_name and isinstance(a_name, str) and a_name.strip() not in audiences:
                     audiences.append(a_name.strip())
             elif isinstance(a, str) and a.strip() not in audiences:
                 audiences.append(a.strip())
@@ -98,7 +118,7 @@ class ProfileNormalizer:
                 if f.fact_type == "target_audience":
                     val = f.fact_value
                     name = val.get("segment") if isinstance(val, dict) else str(val)
-                    if name and name not in audiences:
+                    if name and name.strip() not in audiences:
                         audiences.append(name.strip())
 
         # 4. Use Cases
@@ -106,8 +126,16 @@ class ProfileNormalizer:
         use_cases: List[str] = []
         for uc in raw_use_cases:
             if isinstance(uc, dict):
-                uc_title = uc.get("title") or uc.get("use_case") or uc.get("description")
-                if uc_title and isinstance(uc_title, str) and uc_title not in use_cases:
+                if bool(_get_attr_or_key(uc, "is_rejected", False)):
+                    continue
+                uc_val = uc.get("value", uc) if "value" in uc else uc
+                if isinstance(uc_val, dict):
+                    uc_title = uc_val.get("title") or uc_val.get("use_case") or uc_val.get("description")
+                elif isinstance(uc_val, str):
+                    uc_title = uc_val
+                else:
+                    uc_title = None
+                if uc_title and isinstance(uc_title, str) and uc_title.strip() not in use_cases:
                     use_cases.append(uc_title.strip())
             elif isinstance(uc, str) and uc.strip() not in use_cases:
                 use_cases.append(uc.strip())
@@ -117,7 +145,7 @@ class ProfileNormalizer:
                 if f.fact_type == "use_case":
                     val = f.fact_value
                     name = val.get("title") if isinstance(val, dict) else str(val)
-                    if name and name not in use_cases:
+                    if name and name.strip() not in use_cases:
                         use_cases.append(name.strip())
 
         # 5. Pricing Models
@@ -125,8 +153,16 @@ class ProfileNormalizer:
         pricing_models: List[str] = []
         for pr in raw_pricing:
             if isinstance(pr, dict):
-                model_str = pr.get("model") or pr.get("plan_name") or pr.get("details")
-                if model_str and isinstance(model_str, str) and model_str not in pricing_models:
+                if bool(_get_attr_or_key(pr, "is_rejected", False)):
+                    continue
+                pr_val = pr.get("value", pr) if "value" in pr else pr
+                if isinstance(pr_val, dict):
+                    model_str = pr_val.get("plan_name") or pr_val.get("model") or pr_val.get("details")
+                elif isinstance(pr_val, str):
+                    model_str = pr_val
+                else:
+                    model_str = None
+                if model_str and isinstance(model_str, str) and model_str.strip() not in pricing_models:
                     pricing_models.append(model_str.strip())
             elif isinstance(pr, str) and pr.strip() not in pricing_models:
                 pricing_models.append(pr.strip())
@@ -135,8 +171,8 @@ class ProfileNormalizer:
             for f in grounded_facts:
                 if f.fact_type == "pricing":
                     val = f.fact_value
-                    name = val.get("model") if isinstance(val, dict) else str(val)
-                    if name and name not in pricing_models:
+                    name = val.get("plan_name") if isinstance(val, dict) else str(val)
+                    if name and name.strip() not in pricing_models:
                         pricing_models.append(name.strip())
 
         # 6. Differentiators
@@ -144,8 +180,16 @@ class ProfileNormalizer:
         differentiators: List[str] = []
         for d in raw_diffs:
             if isinstance(d, dict):
-                d_str = d.get("claim") or d.get("differentiator") or d.get("description")
-                if d_str and isinstance(d_str, str) and d_str not in differentiators:
+                if bool(_get_attr_or_key(d, "is_rejected", False)):
+                    continue
+                d_val = d.get("value", d) if "value" in d else d
+                if isinstance(d_val, dict):
+                    d_str = d_val.get("claim") or d_val.get("differentiator") or d_val.get("description")
+                elif isinstance(d_val, str):
+                    d_str = d_val
+                else:
+                    d_str = None
+                if d_str and isinstance(d_str, str) and d_str.strip() not in differentiators:
                     differentiators.append(d_str.strip())
             elif isinstance(d, str) and d.strip() not in differentiators:
                 differentiators.append(d.strip())
@@ -155,7 +199,7 @@ class ProfileNormalizer:
                 if f.fact_type == "differentiator":
                     val = f.fact_value
                     name = val.get("claim") if isinstance(val, dict) else str(val)
-                    if name and name not in differentiators:
+                    if name and name.strip() not in differentiators:
                         differentiators.append(name.strip())
 
         # 7. FAQs

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.db.models import User, Organization
 from app.schemas.evaluator import (
     VisibilityScanCreateRequest,
     VisibilityScanResponse,
@@ -13,6 +14,10 @@ from app.schemas.evaluator import (
     VisibilityScanListResponse,
 )
 from app.evaluator.service import VisibilityEvaluatorService
+from app.schemas.diagnosis import DiagnosisReport
+from app.services.diagnosis_service import VisibilityDiagnosisService
+from app.auth.dependencies import get_current_user, get_current_org, verify_brand_access
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +33,18 @@ router = APIRouter(tags=["Engine 3: AI Visibility Evaluator"])
 async def create_visibility_scan(
     brand_id: str,
     payload: VisibilityScanCreateRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Initiates an asynchronous AI Visibility scan.
+    Enforces that caller is authorized to scan the requested brand.
     Queries the configured AI provider with approved Engine 2 prompts and evaluates
     brand mention presence, recommendation signals, competitors, and citations.
     """
+    await verify_brand_access(brand_id, db, current_org)
+
     try:
         scan = await VisibilityEvaluatorService.create_scan(
             brand_id=brand_id,
@@ -69,9 +79,13 @@ async def create_visibility_scan(
 async def get_visibility_scan(
     brand_id: str,
     scan_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    """Inspects live progress and aggregated metrics of a visibility scan run."""
+    """Inspects live progress and aggregated metrics of an authorized visibility scan run."""
+    await verify_brand_access(brand_id, db, current_org)
+
     try:
         scan = await VisibilityEvaluatorService.get_scan(scan_id, brand_id, db)
         return VisibilityScanResponse.model_validate(scan)
@@ -86,9 +100,13 @@ async def get_visibility_scan(
 )
 async def list_visibility_scans(
     brand_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    """Retrieves all past visibility scan runs for historical tracking and trend analysis."""
+    """Retrieves all past visibility scan runs for an authorized brand."""
+    await verify_brand_access(brand_id, db, current_org)
+
     try:
         scans = await VisibilityEvaluatorService.list_scans(brand_id, db)
         return VisibilityScanListResponse(
@@ -109,12 +127,16 @@ async def list_visibility_scans(
 async def get_visibility_scan_results(
     brand_id: str,
     scan_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Returns full scan summary alongside verbatim AI responses,
     mention context snippets, competitor detections, and citations for each prompt.
     """
+    await verify_brand_access(brand_id, db, current_org)
+
     try:
         scan, results = await VisibilityEvaluatorService.get_scan_results(scan_id, brand_id, db)
         return VisibilityScanDetailResponse(
@@ -123,3 +145,29 @@ async def get_visibility_scan_results(
         )
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
+
+
+@router.get(
+    "/brands/{brand_id}/visibility/scans/{scan_id}/diagnosis",
+    response_model=DiagnosisReport,
+    summary="Get evidence-backed diagnosis and testable action recommendations for a scan"
+)
+async def get_visibility_scan_diagnosis(
+    brand_id: str,
+    scan_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Synthesizes empirical findings across Engine 1 facts, Engine 2 prompts,
+    and Engine 3 evaluation results into structured, testable remediation actions.
+    """
+    await verify_brand_access(brand_id, db, current_org)
+
+    try:
+        report = await VisibilityDiagnosisService.diagnose_scan(scan_id, brand_id, db)
+        return report
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+

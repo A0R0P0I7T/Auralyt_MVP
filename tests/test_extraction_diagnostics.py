@@ -711,5 +711,113 @@ def test_contact_info_filters_search_queries_video_links_and_personal_profiles()
     assert "https://github.com/example-corp" in social_urls
 
 
+def test_product_candidate_rejects_legal_clauses_and_doc_headings():
+    """Verify is_valid_product_candidate rejects legal contracts, clauses, and doc guides."""
+    from app.extractor.fact_synthesizer import is_valid_product_candidate
+
+    # Legal clauses and contracts
+    assert not is_valid_product_candidate("Enterprise Access Agreement")
+    assert not is_valid_product_candidate("Recitals")
+    assert not is_valid_product_candidate("2.1 License Grant")
+    assert not is_valid_product_candidate("5.1 Fees and Payment")
+    assert not is_valid_product_candidate("Schedule 1: Permitted Use")
+    assert not is_valid_product_candidate("Exhibit A: Terms")
+    assert not is_valid_product_candidate("General Provisions")
+    assert not is_valid_product_candidate("Limitation of Liability")
+    assert not is_valid_product_candidate("Terms of Service")
+    assert not is_valid_product_candidate("Privacy Policy")
+
+    # Zero-width spaces and doc guides
+    assert not is_valid_product_candidate("\u200b Using In-Region Routing")
+    assert not is_valid_product_candidate("How to configure routing")
+    assert not is_valid_product_candidate("Feature availability matrix")
+    assert not is_valid_product_candidate("Troubleshooting guide")
+
+    # Legitimate products preserved
+    assert is_valid_product_candidate("Model Routing Engine")
+    assert is_valid_product_candidate("Prompt Caching")
+    assert is_valid_product_candidate("LLM Gateway")
+
+
+def test_use_case_and_audience_rejects_fragments_and_market_comparisons():
+    """Verify use-cases and audiences reject grammar fragments and market-share commentary."""
+    page = CrawledPage(
+        brand_id="test-brand",
+        requested_url="https://example.com/about",
+        final_url="https://example.com/about",
+        http_status=200,
+        page_type="about",
+        extracted_text="""
+        Use cases, split between Chinese OSS and RoW OSS: benchmark comparison.
+        Our use cases are expanding rapidly across industries.
+        As use cases grew exponentially, we hired more engineers.
+        ALL RIGHTS RESERVED UNDER THE APPLICABLE LAW.
+        
+        Use Cases: Multi-agent Customer Support Workflow
+        Solutions for: Enterprise Content Generation
+        Built for: Machine learning engineers and AI product teams
+        """,
+        content_hash="hash-uc-1"
+    )
+    synth = FactSynthesizer("test-brand", user_business_name="Example")
+    facts = synth.synthesize_facts([page])
+
+    use_cases = [f.fact_value for f in facts if f.fact_type == "use_case"]
+    audiences = [f.fact_value for f in facts if f.fact_type == "target_audience"]
+
+    # Fragments and noise rejected
+    assert not any(uc.lower().startswith("s,") for uc in use_cases)
+    assert not any(uc.lower().startswith("s are") for uc in use_cases)
+    assert not any(uc.lower().startswith("s grew") for uc in use_cases)
+    assert not any("chinese oss" in uc.lower() for uc in use_cases)
+    assert not any("all rights reserved" in uc.lower() for uc in use_cases)
+
+    # Legitimate use cases and audiences preserved
+    assert any("Multi-agent Customer Support" in uc for uc in use_cases)
+    assert any("Enterprise Content Generation" in uc for uc in use_cases)
+    assert any("Machine learning engineers" in a for a in audiences)
+
+
+def test_pricing_on_dedicated_pricing_page_extracts_structured_plans():
+    """Verify structured plan extraction on dedicated pricing pages."""
+    pricing_page = CrawledPage(
+        brand_id="test-pricing-plans",
+        requested_url="https://example.com/pricing",
+        final_url="https://example.com/pricing",
+        http_status=200,
+        page_type="pricing",
+        extracted_text="""
+        Choose the plan that fits your business:
+        Free Plan: $0 / mo forever for individuals.
+        Pro Tier: $20 / month billed annually.
+        Enterprise: $200 / user / month for large teams.
+        """,
+        content_hash="hash-pricing-plans"
+    )
+    synth = FactSynthesizer("test-pricing-plans", user_business_name="Example")
+    facts = synth.synthesize_facts([pricing_page])
+
+    pricing_facts = [f for f in facts if f.fact_type == "pricing"]
+    assert len(pricing_facts) >= 2
+    plans = {f.fact_value.get("plan_name"): f.fact_value for f in pricing_facts}
+    assert "Pro" in plans
+    assert plans["Pro"]["amount"] == 20.0
+    assert "price_text" in plans["Pro"]
+    assert "model" in plans["Pro"]
+
+
+def test_crawler_budget_tracking_and_summary():
+    """Verify crawler budget configuration and crawl summary structure."""
+    from app.crawler.engine import ScraplingCrawler
+
+    crawler = ScraplingCrawler(base_url="https://example.com", page_limit=25)
+    summary = crawler.get_crawl_summary()
+    assert summary["page_limit"] == 25
+    assert "category_quotas" in summary
+    assert "budget_limits" in summary
+    assert summary["budget_limits"]["max_pages_per_section"] == 4
+    assert "skip_reasons" in summary
+
+
 
 

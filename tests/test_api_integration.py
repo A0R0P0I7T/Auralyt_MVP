@@ -91,9 +91,9 @@ async def test_brand_onboarding_and_fact_management(client: AsyncClient, test_db
 
 
 @pytest.mark.asyncio
-async def test_crawled_pages_pagination(client: AsyncClient, test_db_session):
+async def test_crawled_pages_pagination(client: AsyncClient, test_db_session, test_org):
     # Setup test brand and pages directly
-    brand = Brand(domain="pagetest.org", business_name="PageTest Org")
+    brand = Brand(domain="pagetest.org", business_name="PageTest Org", organization_id=test_org.id)
     test_db_session.add(brand)
     await test_db_session.flush()
 
@@ -133,8 +133,8 @@ async def test_crawled_pages_pagination(client: AsyncClient, test_db_session):
 
 
 @pytest.mark.asyncio
-async def test_create_brand_fact_rejects_malicious_source_url(client: AsyncClient, test_db_session):
-    brand = Brand(domain="factsecurity.org", business_name="FactSecurity Org")
+async def test_create_brand_fact_rejects_malicious_source_url(client: AsyncClient, test_db_session, test_org):
+    brand = Brand(domain="factsecurity.org", business_name="FactSecurity Org", organization_id=test_org.id)
     test_db_session.add(brand)
     await test_db_session.commit()
 
@@ -157,7 +157,7 @@ async def test_create_brand_fact_rejects_malicious_source_url(client: AsyncClien
 
 
 @pytest.mark.asyncio
-async def test_brand_profile_contract_freeze_schema(client: AsyncClient, test_db_session):
+async def test_brand_profile_contract_freeze_schema(client: AsyncClient, test_db_session, test_org):
     """
     Contract Freeze Test: Verifies that GET /api/brands/{brand_id}/profile adheres
     strictly to the ProfileSummaryResponse schema required by Engine 2.
@@ -168,6 +168,7 @@ async def test_brand_profile_contract_freeze_schema(client: AsyncClient, test_db
         industry="SaaS",
         target_market="Enterprise",
         language="en",
+        organization_id=test_org.id,
         profile_version=1
     )
     test_db_session.add(brand)
@@ -242,7 +243,7 @@ async def test_brand_profile_contract_freeze_schema(client: AsyncClient, test_db
 
 
 @pytest.mark.asyncio
-async def test_brand_profile_contract_empty_profile_behavior(client: AsyncClient, test_db_session):
+async def test_brand_profile_contract_empty_profile_behavior(client: AsyncClient, test_db_session, test_org):
     """
     Contract Freeze Test: Brand with no facts returns 200 with empty lists/dicts
     rather than failing or returning null.
@@ -250,6 +251,7 @@ async def test_brand_profile_contract_empty_profile_behavior(client: AsyncClient
     brand = Brand(
         domain="empty-profile.com",
         business_name="Empty Profile Inc",
+        organization_id=test_org.id,
         profile_version=1
     )
     test_db_session.add(brand)

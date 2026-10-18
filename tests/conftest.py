@@ -28,7 +28,60 @@ async def test_db_session(test_engine):
 
 
 @pytest_asyncio.fixture
-async def client(test_db_session):
+async def test_org(test_db_session):
+    from app.db.models import Organization
+    org = Organization(name="Test Org", slug="test-org")
+    test_db_session.add(org)
+    await test_db_session.commit()
+    await test_db_session.refresh(org)
+    return org
+
+
+@pytest_asyncio.fixture
+async def test_user(test_db_session, test_org):
+    from app.db.models import User, OrganizationMember
+    from app.auth.security import hash_password
+    user = User(
+        email="test@auralyt.ai",
+        hashed_password=hash_password("TestSecret123!"),
+        full_name="Test Engineer",
+        is_active=True,
+        is_superuser=False
+    )
+    test_db_session.add(user)
+    await test_db_session.flush()
+    membership = OrganizationMember(
+        organization_id=test_org.id,
+        user_id=user.id,
+        role="owner"
+    )
+    test_db_session.add(membership)
+    await test_db_session.commit()
+    await test_db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
+async def auth_headers(test_user, test_org):
+    from app.auth.security import create_access_token
+    token = create_access_token(data={"sub": test_user.id, "email": test_user.email, "org_id": test_org.id})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def client(test_db_session, auth_headers):
+    async def override_get_db():
+        yield test_db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver", headers=auth_headers) as ac:
+        yield ac
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def unauthenticated_client(test_db_session):
     async def override_get_db():
         yield test_db_session
 
@@ -46,8 +99,14 @@ async def cleanup_proxy():
     await stop_local_proxy()
 
 
+@pytest.fixture(autouse=True)
+def disable_llm_during_tests(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "LLM_ENABLED", False)
+
+
 @pytest_asyncio.fixture
-async def profiled_brand(test_db_session):
+async def profiled_brand(test_db_session, test_org):
     """Fixture providing an onboarded brand with verified facts."""
     from app.db.models import Brand, ProfileRun, BrandFact
 
@@ -57,6 +116,7 @@ async def profiled_brand(test_db_session):
         industry="Artificial Intelligence",
         target_market="Global",
         language="en",
+        organization_id=test_org.id,
         profile_version=1,
     )
     test_db_session.add(brand)

@@ -6,7 +6,7 @@ from app.db.models import Brand, ProfileRun, BrandFact
 
 
 @pytest_asyncio.fixture
-async def profiled_brand(test_db_session):
+async def profiled_brand(test_db_session, test_org):
     """Fixture providing an onboarded brand with verified facts."""
     brand = Brand(
         domain="aurora-ai.io",
@@ -14,6 +14,7 @@ async def profiled_brand(test_db_session):
         industry="Artificial Intelligence",
         target_market="Global",
         language="en",
+        organization_id=test_org.id,
         profile_version=1,
     )
     test_db_session.add(brand)
@@ -242,9 +243,9 @@ async def test_profile_version_bump_isolates_prompts(client: AsyncClient, profil
 
 
 @pytest.mark.asyncio
-async def test_generate_fails_on_empty_profile(client: AsyncClient, test_db_session):
+async def test_generate_fails_on_empty_profile(client: AsyncClient, test_db_session, test_org):
     """Verify generate returns 400 when brand has no crawled facts or description."""
-    empty_brand = Brand(domain="emptybrand.io", business_name="EmptyBrand", profile_version=1)
+    empty_brand = Brand(domain="emptybrand.io", business_name="EmptyBrand", profile_version=1, organization_id=test_org.id)
     test_db_session.add(empty_brand)
     await test_db_session.commit()
 

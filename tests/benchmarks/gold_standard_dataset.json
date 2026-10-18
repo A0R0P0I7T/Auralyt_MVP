@@ -1,0 +1,216 @@
+{
+  "version": "1.0.0",
+  "dataset_name": "Auralyt Gold Standard Visibility Intelligence Benchmark",
+  "verticals": [
+    "developer_infrastructure",
+    "enterprise_saas",
+    "creative_tools",
+    "consumer_ecommerce"
+  ],
+  "cases": [
+    {
+      "id": "CASE-SAAS-01",
+      "vertical": "enterprise_saas",
+      "target_brand": "Linear",
+      "brand_domain": "linear.app",
+      "known_competitors": ["Jira", "Asana"],
+      "prompt": "What are the best issue tracking tools for modern software teams?",
+      "provider_response": "For software engineering teams, **Linear** (https://linear.app) is one of the highest-rated issue trackers today. It offers speed, keyboard shortcuts, and clean sprint planning. Alternatives include Jira (https://jira.atlassian.com) for enterprise compliance.",
+      "ground_truth": {
+        "brand_mentioned": true,
+        "recommendation_status": "recommended",
+        "visibility_rank": null,
+        "target_citations": ["https://linear.app"],
+        "competitor_citations": ["https://jira.atlassian.com"],
+        "is_homonym": false
+      }
+    },
+    {
+      "id": "CASE-SAAS-02-CONTRASTIVE",
+      "vertical": "enterprise_saas",
+      "target_brand": "Linear",
+      "brand_domain": "linear.app",
+      "known_competitors": ["Jira"],
+      "prompt": "Which tool should large enterprise teams choose?",
+      "provider_response": "While Linear is a fast modern tool, Jira remains the top choice for enterprise teams requiring custom workflows and extensive auditing.",
+      "ground_truth": {
+        "brand_mentioned": true,
+        "recommendation_status": "neutral_mention",
+        "visibility_rank": null,
+        "target_citations": [],
+        "competitor_citations": [],
+        "is_homonym": false
+      }
+    },
+    {
+      "id": "CASE-SAAS-03-HOMONYM",
+      "vertical": "enterprise_saas",
+      "target_brand": "Linear",
+      "brand_domain": "linear.app",
+      "known_competitors": ["Jira"],
+      "prompt": "How do data analysts perform regression analysis?",
+      "provider_response": "In statistics, linear regression models the relationship between a scalar response and explanatory variables. It uses linear algebra and ordinary least squares.",
+      "ground_truth": {
+        "brand_mentioned": false,
+        "recommendation_status": "not_mentioned",
+        "visibility_rank": null,
+        "target_citations": [],
+        "competitor_citations": [],
+        "is_homonym": true
+      }
+    },
+    {
+      "id": "CASE-DEV-01",
+      "vertical": "developer_infrastructure",
+      "target_brand": "Pinecone",
+      "brand_domain": "pinecone.io",
+      "known_competitors": ["Weaviate", "Qdrant", "Milvus"],
+      "prompt": "What is the best vector database for production semantic search?",
+      "provider_response": "1. Pinecone — Fully managed serverless vector database with ultra-low latency (https://pinecone.io).\n2. Weaviate — Open-source vector engine (https://weaviate.io).\n3. Qdrant — High-performance Rust-based vector search.",
+      "ground_truth": {
+        "brand_mentioned": true,
+        "recommendation_status": "recommended",
+        "visibility_rank": 1,
+        "target_citations": ["https://pinecone.io"],
+        "competitor_citations": ["https://weaviate.io"],
+        "is_homonym": false
+      }
+    },
+    {
+      "id": "CASE-DEV-02-COMPETITOR-LEAD",
+      "vertical": "developer_infrastructure",
+      "target_brand": "Pinecone",
+      "brand_domain": "pinecone.io",
+      "known_competitors": ["Weaviate", "Qdrant"],
+      "prompt": "Which open-source vector database is best for self-hosting?",
+      "provider_response": "We strongly recommend Weaviate for self-hosted production setups. While Pinecone is a great closed-source cloud service, it does not support on-premise deployments.",
+      "ground_truth": {
+        "brand_mentioned": true,
+        "recommendation_status": "not_recommended",
+        "visibility_rank": null,
+        "target_citations": [],
+        "competitor_citations": [],
+        "is_homonym": false
+      }
+    },
+    {
+      "id": "CASE-DEV-03-HOMONYM-SCALE",
+      "vertical": "developer_infrastructure",
+      "target_brand": "Scale",
+      "brand_domain": "scale.com",
+      "known_competitors": ["Labelbox"],
+      "prompt": "How do web applications scale infrastructure?",
+      "provider_response": "Web apps scale up by increasing server memory and scale horizontally by deploying multiple container replicas across availability zones.",
+      "ground_truth": {
+        "brand_mentioned": false,
+        "recommendation_status": "not_mentioned",
+        "visibility_rank": null,
+        "target_citations": [],
+        "competitor_citations": [],
+        "is_homonym": true
+      }
+    },
+    {
+      "id": "CASE-DEV-04-RANKED-SECOND",
+      "vertical": "developer_infrastructure",
+      "target_brand": "Weaviate",
+      "brand_domain": "weaviate.io",
+      "known_competitors": ["Pinecone", "Qdrant"],
+      "prompt": "Compare top vector databases for enterprise AI.",
+      "provider_response": "1. Pinecone — Managed SaaS vector index (https://pinecone.io).\n2. Weaviate — Open-source, flexible vector search engine (https://weaviate.io).\n3. Qdrant — Rust-based high-concurrency vector database.",
+      "ground_truth": {
+        "brand_mentioned": true,
+        "recommendation_status": "recommended",
+        "visibility_rank": 2,
+        "target_citations": ["https://weaviate.io"],
+        "competitor_citations": ["https://pinecone.io"],
+        "is_homonym": false
+      }
+    },
+    {
+      "id": "CASE-CREATIVE-01",
+      "vertical": "creative_tools",
+      "target_brand": "Runway",
+      "brand_domain": "runwayml.com",
+      "known_competitors": ["Pika", "Midjourney"],
+      "prompt": "What are the top generative AI tools for video production?",
+      "provider_response": "Runway (https://runwayml.com) is the premier platform for AI video generation with its Gen-2 and Gen-3 models. Another notable tool is Pika Labs (https://pika.art).",
+      "ground_truth": {
+        "brand_mentioned": true,
+        "recommendation_status": "recommended",
+        "visibility_rank": null,
+        "target_citations": ["https://runwayml.com"],
+        "competitor_citations": ["https://pika.art"],
+        "is_homonym": false
+      }
+    },
+    {
+      "id": "CASE-CREATIVE-02-OMITTED",
+      "vertical": "creative_tools",
+      "target_brand": "Runway",
+      "brand_domain": "runwayml.com",
+      "known_competitors": ["Canva", "Adobe"],
+      "prompt": "What are the best tools for social media graphic templates?",
+      "provider_response": "Canva and Adobe Express are the market leaders for creating social media banners, Instagram stories, and marketing templates.",
+      "ground_truth": {
+        "brand_mentioned": false,
+        "recommendation_status": "not_mentioned",
+        "visibility_rank": null,
+        "target_citations": [],
+        "competitor_citations": [],
+        "is_homonym": false
+      }
+    },
+    {
+      "id": "CASE-ECOM-01",
+      "vertical": "consumer_ecommerce",
+      "target_brand": "Allbirds",
+      "brand_domain": "allbirds.com",
+      "known_competitors": ["Nike", "Adidas", "On Running"],
+      "prompt": "What are the best sustainable everyday walking shoes?",
+      "provider_response": "Allbirds (https://allbirds.com) leads the sustainable footwear space with merino wool sneakers. On Running and Nike also offer recycled running shoes.",
+      "ground_truth": {
+        "brand_mentioned": true,
+        "recommendation_status": "recommended",
+        "visibility_rank": null,
+        "target_citations": ["https://allbirds.com"],
+        "competitor_citations": [],
+        "is_homonym": false
+      }
+    },
+    {
+      "id": "CASE-ECOM-02-CITATION-LEAK",
+      "vertical": "consumer_ecommerce",
+      "target_brand": "Allbirds",
+      "brand_domain": "allbirds.com",
+      "known_competitors": ["Nike", "Adidas"],
+      "prompt": "Where can I buy marathon racing shoes?",
+      "provider_response": "For competitive marathon racing, Nike (https://nike.com) Vaporfly is the industry standard. See reviews at Runner's World (https://runnersworld.com). Allbirds is not designed for competitive racing.",
+      "ground_truth": {
+        "brand_mentioned": true,
+        "recommendation_status": "not_recommended",
+        "visibility_rank": null,
+        "target_citations": [],
+        "competitor_citations": ["https://nike.com"],
+        "is_homonym": false
+      }
+    },
+    {
+      "id": "CASE-SAAS-04-RANKED-THIRD",
+      "vertical": "enterprise_saas",
+      "target_brand": "Asana",
+      "brand_domain": "asana.com",
+      "known_competitors": ["Linear", "Jira"],
+      "prompt": "Rank the top work management platforms for cross-functional teams.",
+      "provider_response": "1. Linear — Best for engineering velocity.\n2. Jira — Best for enterprise compliance.\n3. Asana — Ideal for cross-department project coordination (https://asana.com).",
+      "ground_truth": {
+        "brand_mentioned": true,
+        "recommendation_status": "recommended",
+        "visibility_rank": 3,
+        "target_citations": ["https://asana.com"],
+        "competitor_citations": [],
+        "is_homonym": false
+      }
+    }
+  ]
+}

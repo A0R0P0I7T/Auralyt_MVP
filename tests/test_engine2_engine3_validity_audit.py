@@ -120,10 +120,11 @@ async def test_force_regeneration_does_not_persist_duplicate_prompt_text(
         json={"prompt_count": 10, "force_regenerate": True},
     )
     assert first.json()["prompts_generated"] == 10
-    assert second.json()["prompts_generated"] == 0
+    assert second.json()["prompts_generated"] == 10
     prompts = (
         await client.get(f"/api/brands/{profiled_brand.id}/prompts?page_size=50")
     ).json()
+    assert prompts["total"] == 10
     assert len({item["text"].casefold() for item in prompts["items"]}) == prompts["total"]
 
 

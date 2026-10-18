@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Auralyt — Brand & Website Profiler (Engine 1)</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:,">
 </head>
 <body>
   <header>
@@ -16,25 +17,175 @@
       </div>
     </div>
     <nav class="nav-links">
-      <button class="nav-btn active" onclick="switchTab('onboard')">Start Profiling</button>
-      <button class="nav-btn" id="nav-progress" onclick="switchTab('progress')">Crawl Progress</button>
-      <button class="nav-btn" id="nav-profile" onclick="switchTab('profile')">Brand Profile</button>
-      <button class="nav-btn" id="nav-facts" onclick="switchTab('facts')">Fact Verification</button>
-      <button class="nav-btn" id="nav-prompts" onclick="switchTab('prompts')">Prompt Intelligence</button>
+      <button class="nav-btn active" id="nav-experiment" onclick="switchTab('experiment')">🔬 Run Experiment</button>
       <button class="nav-btn" id="nav-evaluator" onclick="switchTab('evaluator')">AI Visibility (Engine 3)</button>
+      <button class="nav-btn" id="nav-prompts" onclick="switchTab('prompts')">Prompts (Engine 2)</button>
+      <button class="nav-btn" id="nav-profile" onclick="switchTab('profile')">Brand Profile (Engine 1)</button>
+      <button class="nav-btn" id="nav-facts" onclick="switchTab('facts')">Fact Verification</button>
       <button class="nav-btn" id="nav-pages" onclick="switchTab('pages')">Crawled Pages</button>
+      <button class="nav-btn" id="nav-onboard" onclick="switchTab('onboard')">Manual Profiler</button>
     </nav>
-    <div style="display: flex; align-items: center; gap: 0.5rem; margin-left: auto;">
-      <label for="global-brand-select" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0; white-space: nowrap;">Active Brand:</label>
-      <select id="global-brand-select" onchange="handleSelectBrand(this.value)" style="background: #0f172a; color: #f8fafc; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.85rem; min-width: 180px;">
-        <option value="">Select Brand...</option>
-      </select>
+    <div style="display: flex; align-items: center; gap: 0.75rem; margin-left: auto;">
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <label for="global-brand-select" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0; white-space: nowrap;">Active Brand:</label>
+        <select id="global-brand-select" onchange="handleSelectBrand(this.value)" style="background: #0f172a; color: #f8fafc; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.85rem; min-width: 170px;">
+          <option value="">Select Brand...</option>
+        </select>
+      </div>
+
+      <!-- Auth Tenant Badge & User Menu -->
+      <div id="auth-status-container" style="display: flex; align-items: center; gap: 0.6rem; border-left: 1px solid var(--border-color); padding-left: 0.75rem;">
+        <div id="auth-user-badge" style="display: flex; flex-direction: column; text-align: right;">
+          <span id="auth-org-name" style="font-size: 0.75rem; font-weight: 700; color: #38bdf8;">Default Organization</span>
+          <span id="auth-user-email" style="font-size: 0.7rem; color: var(--text-muted);">admin@auralyt.ai</span>
+        </div>
+        <button id="auth-logout-btn" onclick="handleLogout()" class="btn btn-secondary" style="padding: 0.35rem 0.65rem; font-size: 0.8rem;">Logout</button>
+        <button id="auth-login-btn" onclick="showAuthModal('login')" class="btn btn-primary" style="display: none; padding: 0.35rem 0.65rem; font-size: 0.8rem;">Login</button>
+      </div>
     </div>
   </header>
 
   <main>
-    <!-- TAB 1: Onboard / Start Profiling -->
-    <section id="tab-onboard" class="tab-content">
+    <!-- TAB 0: End-to-End Experiment (Primary Focus) -->
+    <section id="tab-experiment" class="tab-content">
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+          <div>
+            <h2 class="card-title" style="font-size: 1.35rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem;">
+              <span>🔬</span> End-to-End AI Visibility Experiment
+            </h2>
+            <p class="card-desc" style="margin-bottom: 0;">
+              Execute the complete 3-engine pipeline in one click: <strong>Engine 1</strong> extracts website ground truth &rarr; <strong>Engine 2</strong> generates grounded buyer prompts &rarr; <strong>Engine 3</strong> queries AI models to evaluate brand visibility, recommendation rate, and competitor citations.
+            </p>
+          </div>
+          <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-weight: 600;">
+            Pipeline: E1 &rarr; E2 &rarr; E3
+          </span>
+        </div>
+
+        <form id="experiment-form" onsubmit="handleRunExperiment(event)">
+          <div class="form-grid" style="grid-template-columns: 2fr 1fr 1.5fr auto; align-items: flex-end; gap: 1rem;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="exp-website-url" style="font-weight: 600;">Website URL *</label>
+              <input type="url" id="exp-website-url" placeholder="https://chatgpt.com" required value="https://chatgpt.com">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="exp-prompt-count" style="font-weight: 600;">Prompt Count</label>
+              <input type="number" id="exp-prompt-count" min="1" max="50" value="20" required>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="exp-provider" style="font-weight: 600;">AI Provider</label>
+              <select id="exp-provider">
+                <option value="gemini" selected>Google Gemini (gemini-3.1-flash-lite)</option>
+                <option value="mock">Offline Deterministic Mock</option>
+              </select>
+            </div>
+            <div>
+              <button type="submit" class="btn btn-primary" id="exp-run-btn" style="padding: 0.65rem 1.25rem; font-weight: 600; white-space: nowrap; height: 42px;">
+                🚀 Run Experiment
+              </button>
+            </div>
+          </div>
+          <div id="exp-error" class="banner banner-danger" style="display: none; margin-top: 1rem;"></div>
+        </form>
+      </div>
+
+      <!-- Pipeline Execution Progress Stepper -->
+      <div class="card" id="exp-progress-card" style="display: none; margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 700;" id="exp-progress-title">Pipeline Execution in Progress</h3>
+          <span id="exp-progress-badge" class="badge badge-pending">RUNNING</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;" id="exp-stepper">
+          <div class="step-card" id="exp-step-1" style="background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+              <span style="font-weight: 700; font-size: 0.8rem; color: #94a3b8;">STEP 1: ENGINE 1</span>
+              <span class="badge" id="exp-step-1-status" style="font-size: 0.7rem;">IDLE</span>
+            </div>
+            <div style="font-size: 0.9rem; font-weight: 600; color: #f8fafc; margin-bottom: 0.25rem;">Website Profiler</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);" id="exp-step-1-detail">Crawl pages & extract ground truth facts</div>
+          </div>
+
+          <div class="step-card" id="exp-step-2" style="background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+              <span style="font-weight: 700; font-size: 0.8rem; color: #94a3b8;">STEP 2: ENGINE 2</span>
+              <span class="badge" id="exp-step-2-status" style="font-size: 0.7rem;">IDLE</span>
+            </div>
+            <div style="font-size: 0.9rem; font-weight: 600; color: #f8fafc; margin-bottom: 0.25rem;">Prompt Intelligence</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);" id="exp-step-2-detail">Synthesize grounded buyer prompts</div>
+          </div>
+
+          <div class="step-card" id="exp-step-3" style="background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+              <span style="font-weight: 700; font-size: 0.8rem; color: #94a3b8;">STEP 3: ENGINE 3</span>
+              <span class="badge" id="exp-step-3-status" style="font-size: 0.7rem;">IDLE</span>
+            </div>
+            <div style="font-size: 0.9rem; font-weight: 600; color: #f8fafc; margin-bottom: 0.25rem;">AI Visibility Scan</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);" id="exp-step-3-detail">Query AI model & evaluate visibility</div>
+          </div>
+        </div>
+
+        <div style="width: 100%; background: #1e293b; height: 8px; border-radius: 4px; overflow: hidden; margin-bottom: 0.75rem;">
+          <div id="exp-progress-bar" style="height: 100%; width: 5%; background: #38bdf8; transition: width 0.3s ease;"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted);">
+          <span id="exp-progress-msg">Initializing pipeline...</span>
+          <span id="exp-progress-elapsed">0s elapsed</span>
+        </div>
+      </div>
+
+      <!-- Engine 3 Visibility Results View -->
+      <div id="exp-results-container" style="display: none;">
+        <!-- Metrics Scorecard Grid -->
+        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.5rem;">
+          <div class="stat-box" style="border-top: 3px solid #38bdf8;">
+            <div class="stat-value" id="exp-score" style="color: #38bdf8;">--</div>
+            <div class="stat-label">Visibility Score (/100)</div>
+          </div>
+          <div class="stat-box" style="border-top: 3px solid #22c55e;">
+            <div class="stat-value" id="exp-mention-rate" style="color: #22c55e;">--%</div>
+            <div class="stat-label">Brand Mention Rate</div>
+          </div>
+          <div class="stat-box" style="border-top: 3px solid #eab308;">
+            <div class="stat-value" id="exp-recommend-rate" style="color: #eab308;">--%</div>
+            <div class="stat-label">Recommendation Rate</div>
+          </div>
+          <div class="stat-box" style="border-top: 3px solid #a855f7;">
+            <div class="stat-value" id="exp-prompts-count" style="font-size: 1.35rem; color: #cbd5e1;">--</div>
+            <div class="stat-label">Evaluated Prompts</div>
+          </div>
+        </div>
+
+        <!-- Meta info banner with quick inspection links -->
+        <div class="card" style="padding: 0.75rem 1.25rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; font-size: 0.85rem;">
+          <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+            <span><strong>Brand:</strong> <span id="exp-brand-name">--</span> (<span id="exp-brand-domain">--</span>)</span>
+            <span><strong>Model:</strong> <span id="exp-model-badge" class="badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc;">--</span></span>
+            <span><strong>Duration:</strong> <span id="exp-duration">--</span></span>
+            <span><strong>Tokens:</strong> <span id="exp-total-tokens">--</span></span>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary" onclick="viewBrandIntermediateProfile()" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;">Inspect Engine 1 Facts</button>
+            <button class="btn btn-secondary" onclick="viewBrandIntermediatePrompts()" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;">Inspect Engine 2 Prompts</button>
+          </div>
+        </div>
+
+        <!-- Prompt-by-Prompt Results -->
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3 class="card-title" style="font-size: 1.15rem; margin-bottom: 0;">📋 Evaluated Prompts & AI Responses</h3>
+            <span style="font-size: 0.8rem; color: var(--text-muted);" id="exp-results-count-label"></span>
+          </div>
+          <div id="exp-results-cards">
+            <!-- Dynamic prompt evaluation cards -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 1: Onboard / Start Profiling (Manual) -->
+    <section id="tab-onboard" class="tab-content" style="display: none;">
       <div class="card">
         <h2 class="card-title">🔍 Onboard & Profile Brand Website</h2>
         <p class="card-desc">
@@ -236,7 +387,8 @@
           <select id="fact-filter-status" onchange="renderFactsList()" style="width: 200px;">
             <option value="">All Verification States</option>
             <option value="confirmed">User Confirmed Only</option>
-            <option value="unconfirmed">Unconfirmed / Proposed Only</option>
+            <option value="unconfirmed">Pending Review Only</option>
+            <option value="rejected">Rejected Only</option>
           </select>
         </div>
 
@@ -385,7 +537,17 @@
     <section id="tab-pages" class="tab-content" style="display: none;">
       <div class="card">
         <h2 class="card-title">📄 Crawled Pages Explorer</h2>
-        <p class="card-desc">Audit each page fetched during the profiling run, inspect HTTP status codes, detected page classifications, and extracted text.</p>
+        <p class="card-desc">Audit each page fetched during the profiling run, inspect HTTP status codes, detected page classifications, contribution to brand profile facts, and skip diagnostics.</p>
+
+        <!-- Crawl Budget & Skip Diagnostics -->
+        <div id="crawl-budget-diagnostics" style="display: none; background: #131c2e; padding: 1rem 1.25rem; border-radius: 8px; margin-bottom: 1.25rem; border: 1px solid var(--border-color);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <h3 style="font-size: 0.95rem; margin: 0; color: #93c5fd;">📊 Crawl Budget & Execution Summary</h3>
+            <span id="crawl-budget-run-status" class="badge"></span>
+          </div>
+          <div id="crawl-budget-metrics" style="display: flex; gap: 1.5rem; flex-wrap: wrap; font-size: 0.85rem; color: var(--text-secondary);"></div>
+          <div id="crawl-skip-reasons" style="margin-top: 0.5rem; font-size: 0.8rem; color: #fbbf24;"></div>
+        </div>
 
         <div class="table-container">
           <table>
@@ -394,13 +556,14 @@
                 <th>Status</th>
                 <th>URL</th>
                 <th>Page Type</th>
+                <th>Facts Produced</th>
                 <th>Title</th>
                 <th>JS Used</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody id="pages-table-body">
-              <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No pages loaded.</td></tr>
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No pages loaded.</td></tr>
             </tbody>
           </table>
         </div>
@@ -419,9 +582,13 @@
     <section id="tab-evaluator" class="tab-content" style="display: none;">
       <!-- Scan Controls Card -->
       <div class="card" style="margin-bottom: 1.5rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
           <h2 class="card-title">👁️ Engine 3: AI Visibility Evaluator</h2>
-          <span id="eval-status-badge" class="badge badge-pending">READY</span>
+          <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <select id="eval_history_scan_select" onchange="handleSelectHistoricalScan(this.value)" style="display: none; font-size: 0.85rem; padding: 0.35rem 0.65rem; background: #0f172a; border: 1px solid var(--border-color); color: #f8fafc; border-radius: 4px;">
+            </select>
+            <span id="eval-status-badge" class="badge badge-pending">READY</span>
+          </div>
         </div>
         <p class="card-desc">
           Measure how leading AI models represent your brand when answering approved prompts generated by Engine 2. Track brand mention presence, recommendation endorsements, competitor citations, and source URLs.
@@ -460,7 +627,7 @@
             <strong>⚠️ SIMULATED DATA NOTICE:</strong> This visibility scan used the offline <strong>Mock AI Provider</strong> (deterministic simulation). Scores and evaluations reflect local mock test patterns and do not represent actual live LLM visibility.
           </div>
           <div id="eval-run-info" style="display: none; margin-top: 1rem; font-size: 0.85rem; color: var(--text-secondary);">
-            Scan ID: <code id="eval-info-id" style="color: #93c5fd;"></code> | Provider: <span id="eval-info-provider" style="font-weight: 600;"></span> | Model: <span id="eval-info-model" style="font-weight: 600;"></span> | Duration: <span id="eval-info-duration"></span>s
+            Scan ID: <code id="eval-info-id" style="color: #93c5fd;"></code> | Profile: <span id="eval-info-profile-version" style="font-weight: 600; color: #a78bfa;"></span> | Provider: <span id="eval-info-provider" style="font-weight: 600;"></span> | Model: <span id="eval-info-model" style="font-weight: 600;"></span> | Duration: <span id="eval-info-duration"></span>s
           </div>
         </div>
       </div>
@@ -588,6 +755,10 @@
         <div style="font-size: 0.8rem; color: var(--text-muted);">HEADINGS (H1 / H2)</div>
         <div id="page-detail-headings" style="font-size: 0.85rem; color: var(--text-secondary);"></div>
       </div>
+      <div style="margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">EXTRACTED FACTS FROM THIS PAGE (<span id="page-detail-facts-count">0</span>)</div>
+        <div id="page-detail-facts-list" style="background: #0f172a; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); font-size: 0.85rem; max-height: 180px; overflow-y: auto;"></div>
+      </div>
       <div>
         <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">EXTRACTED READABLE TEXT</div>
         <pre id="page-detail-text" style="background: #0f172a; padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); font-size: 0.8rem; max-height: 300px; overflow-y: auto; white-space: pre-wrap;"></pre>
@@ -669,6 +840,50 @@
       </div>
       <div style="margin-top: 1rem; display: flex; justify-content: flex-end;">
         <button class="btn btn-secondary" onclick="closeModal('raw-response-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Authentication Modal (Login / Register) -->
+  <div class="modal-overlay" id="auth-modal" style="display: none;">
+    <div class="modal-content" style="max-width: 440px; padding: 2rem;">
+      <h3 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem;" id="auth-modal-title">Sign in to Auralyt</h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem;" id="auth-modal-subtitle">Enter your credentials to access protected brand data and intelligence engines.</p>
+
+      <div id="auth-modal-error" class="banner banner-danger" style="display: none; margin-bottom: 1rem; font-size: 0.85rem;"></div>
+
+      <form id="auth-modal-form" onsubmit="handleAuthSubmit(event)">
+        <div id="auth-name-group" class="form-group" style="display: none; margin-bottom: 1rem;">
+          <label for="auth-full-name">Full Name</label>
+          <input type="text" id="auth-full-name" placeholder="Ada Lovelace">
+        </div>
+        <div id="auth-org-group" class="form-group" style="display: none; margin-bottom: 1rem;">
+          <label for="auth-org-name-input">Organization Name</label>
+          <input type="text" id="auth-org-name-input" placeholder="Acme Technologies">
+        </div>
+        <div class="form-group" style="margin-bottom: 1rem;">
+          <label for="auth-email">Email Address</label>
+          <input type="email" id="auth-email" placeholder="admin@auralyt.ai" required autocomplete="username">
+        </div>
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+          <label for="auth-password">Password</label>
+          <input type="password" id="auth-password" placeholder="••••••••••••" required autocomplete="current-password">
+        </div>
+
+        <button type="submit" id="auth-submit-btn" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 0.65rem; font-size: 0.95rem;">
+          Sign In
+        </button>
+      </form>
+
+      <div style="margin-top: 1rem; text-align: center; font-size: 0.8rem; color: var(--text-muted);">
+        <span id="auth-switch-prompt">Don't have an account?</span>
+        <button type="button" onclick="toggleAuthMode()" id="auth-switch-btn" style="background: none; border: none; color: #38bdf8; text-decoration: underline; cursor: pointer; padding: 0; font-size: 0.8rem; margin-left: 0.25rem;">Create Organization Account</button>
+      </div>
+
+      <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color); font-size: 0.75rem; color: var(--text-muted); text-align: center;">
+        Pre-configured Admin: <code style="color: #cbd5e1;">admin@auralyt.ai</code> / <code style="color: #cbd5e1;">AuralytAdmin2026!</code>
+        <br>
+        <button type="button" onclick="fillAdminCredentials()" style="margin-top: 0.4rem; background: #1e293b; color: #38bdf8; border: 1px solid #334155; border-radius: 4px; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.75rem;">Fill Admin Credentials</button>
       </div>
     </div>
   </div>

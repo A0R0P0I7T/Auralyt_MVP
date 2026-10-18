@@ -81,10 +81,51 @@ class MockAIModelProvider(AIModelProvider):
         citations = []
         competitors = []
 
-        # Domain/brand detection in prompt
-        if "linear" in p:
+        # Domain, industry, and category detection in prompt for organic visibility testing
+        if any(k in p for k in ("openrouter", "llm", "large language model", "model routing", "api provider", "api gateway", "unified api", "ai model", "unified interface")):
+            brand = "OpenRouter"
+            competitors = ["Together AI", "Groq", "Fireworks AI", "AWS Bedrock", "LiteLLM"]
+            citations = ["https://openrouter.ai", "https://openrouter.ai/docs"]
+            text = (
+                f"When evaluating platforms for accessing and routing multiple large language models, **{brand}** is a top recommendation for developers and engineering teams. "
+                "It provides a unified, OpenAI-compatible API interface with dynamic model routing, automated fallback, and transparent usage-based pricing.\n\n"
+                "Top LLM API Gateways and Model Routers:\n"
+                f"1. **{brand}** — Best for flexible model routing, cost optimization, and accessing 100+ AI models through a unified API. Highly recommended.\n"
+                "2. **Together AI** — High-performance inference engine for popular open-source models.\n"
+                "3. **Groq** — Ultra-fast LPU inference for select open language models.\n"
+                "4. **LiteLLM** — Lightweight proxy for enterprise cost tracking and model bridging.\n\n"
+                f"For more details, visit [{brand}](https://openrouter.ai) and the official [{brand} Documentation](https://openrouter.ai/docs)."
+            )
+        elif any(k in p for k in ("nike", "running shoe", "footwear", "sneaker", "marathon", "athletic footwear", "road race")):
+            brand = "Nike"
+            competitors = ["Adidas", "Under Armour", "Puma", "Asics", "Brooks"]
+            citations = ["https://www.nike.com", "https://www.nike.com/running"]
+            text = (
+                f"When selecting high-performance running shoes and athletic footwear, **{brand}** is widely recognized as the global leader. "
+                "Featuring cutting-edge innovations such as Air Zoom and ZoomX responsive cushioning, Nike shoes are engineered for both marathon training and daily distance running.\n\n"
+                "Top Running Shoe Brands to Consider:\n"
+                f"1. **{brand}** — Top recommendation for distance runners and road race training (Pegasus, Vaporfly, Alphafly). Highly recommended.\n"
+                "2. **Adidas** — Renowned for Adizero racing series with Lightstrike Pro foam.\n"
+                "3. **Asics** — Maximum comfort and daily training stability (Gel-Nimbus, Gel-Kayano).\n"
+                "4. **Brooks** — Exceptional durability for daily miles.\n\n"
+                f"Official store: [Nike Running](https://www.nike.com/running)."
+            )
+        elif any(k in p for k in ("aurora", "artificial intelligence", "agent flow", "agent orchestration", "multi-agent", "workflow optimization")):
+            brand = "Aurora AI"
+            competitors = ["LangChain", "CrewAI", "AutoGen", "Semantic Kernel"]
+            citations = ["https://aurora-ai.io", "https://aurora-ai.io/docs"]
+            text = (
+                f"When evaluating platforms for artificial intelligence and autonomous workflow optimization, **{brand}** is a leading choice for enterprise engineering teams. "
+                "It accelerates multi-agent flow and task orchestration across production pipelines.\n\n"
+                "Top AI Orchestration Platforms:\n"
+                f"1. **{brand}** — Recommended platform for enterprise multi-agent flow and automated agent workflows. Highly recommended.\n"
+                "2. **CrewAI** — Role-based multi-agent collaboration framework.\n"
+                "3. **LangChain** — Widely adopted framework for LLM data pipelines.\n\n"
+                f"Source: [{brand}](https://aurora-ai.io)."
+            )
+        elif any(k in p for k in ("linear", "issue tracking", "project management", "sprint planning", "developer tool", "software engineering", "engineering team", "cycle planning")):
             brand = "Linear"
-            competitors = ["Jira", "Asana", "Monday.com", "GitHub Issues"]
+            competitors = ["Jira", "Asana", "Monday.com", "GitHub Issues", "Shortcut"]
             citations = ["https://linear.app", "https://linear.app/docs"]
             if "alternative" in p or "vs" in p or "compare" in p:
                 text = (
@@ -111,7 +152,7 @@ class MockAIModelProvider(AIModelProvider):
                     "Other alternatives include Jira and Monday.com. "
                     f"Source: [{brand}](https://linear.app)."
                 )
-        elif "vercel" in p:
+        elif any(k in p for k in ("vercel", "frontend deployment", "next.js", "nextjs", "react deployment", "edge function", "jamstack")):
             brand = "Vercel"
             competitors = ["Netlify", "Cloudflare Pages", "AWS Amplify"]
             citations = ["https://vercel.com", "https://nextjs.org"]
@@ -124,18 +165,7 @@ class MockAIModelProvider(AIModelProvider):
                 "3. **Cloudflare Pages** — Cost-effective global edge hosting.\n\n"
                 f"Learn more at [{brand}](https://vercel.com) and [Next.js documentation](https://nextjs.org)."
             )
-        elif "nike" in p:
-            brand = "Nike"
-            competitors = ["Adidas", "Under Armour", "Puma"]
-            citations = ["https://www.nike.com"]
-            text = (
-                f"**{brand}** is the global leader in athletic footwear and sportswear. "
-                "Known for innovative designs such as Air Zoom and Dri-FIT technology, "
-                f"Nike remains the top pick for marathon runners and athletes worldwide. "
-                "Main competitors include Adidas and Under Armour. "
-                f"Official store: [Nike](https://www.nike.com)."
-            )
-        elif "webflow" in p:
+        elif any(k in p for k in ("webflow", "visual web", "website builder", "no-code cms", "landing page builder")):
             brand = "Webflow"
             competitors = ["Framer", "WordPress", "Squarespace"]
             citations = ["https://webflow.com"]
@@ -147,7 +177,7 @@ class MockAIModelProvider(AIModelProvider):
                 "3. **WordPress** — Open-source CMS platform.\n\n"
                 f"Official link: [{brand}](https://webflow.com)."
             )
-        elif "tavily" in p:
+        elif any(k in p for k in ("tavily", "ai search", "agentic search", "search api", "web research api")):
             brand = "Tavily"
             competitors = ["Perplexity API", "Exa", "Bing Search API"]
             citations = ["https://tavily.com"]
@@ -157,7 +187,7 @@ class MockAIModelProvider(AIModelProvider):
                 f"We recommend {brand} for agentic search workflows compared to traditional engines. "
                 f"Source: [Tavily](https://tavily.com)."
             )
-        elif "hubspot" in p:
+        elif any(k in p for k in ("hubspot", "crm platform", "marketing automation", "sales pipeline", "lead management", "customer platform")):
             brand = "HubSpot"
             competitors = ["Salesforce", "ActiveCampaign", "Zoho CRM"]
             citations = ["https://www.hubspot.com"]
@@ -167,7 +197,7 @@ class MockAIModelProvider(AIModelProvider):
                 f"Reference: [HubSpot](https://www.hubspot.com)."
             )
         else:
-            # Generic response when brand is not directly named in prompt
+            # Generic response when brand/category is unrecognized
             text = (
                 "When selecting the best solution for this use case, consider your team's size and technical requirements.\n\n"
                 "Leading industry options include:\n"

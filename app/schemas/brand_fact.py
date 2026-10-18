@@ -15,7 +15,7 @@ class BrandFactResponse(BaseModel):
     source_page_id: Optional[str] = None
     source_url: Optional[str] = None
     evidence_snippet: Optional[str] = None
-    supporting_evidence: list[dict] = []
+    supporting_evidence: Optional[list[dict]] = Field(default_factory=list)
     extraction_method: str
     confidence: float
     user_confirmed: bool

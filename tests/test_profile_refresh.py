@@ -5,12 +5,13 @@ from app.services.profiler_service import ProfilerService
 
 
 @pytest.mark.asyncio
-async def test_refresh_preserves_user_confirmed_facts(client: AsyncClient, test_db_session):
+async def test_refresh_preserves_user_confirmed_facts(client: AsyncClient, test_db_session, test_org):
     # 1. Create a brand with profile_version = 1
     brand = Brand(
         domain="example-brand.com",
         business_name="Original Name",
-        profile_version=1
+        profile_version=1,
+        organization_id=test_org.id
     )
     test_db_session.add(brand)
     await test_db_session.flush()

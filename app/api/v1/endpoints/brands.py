@@ -1,11 +1,11 @@
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.db.models import Brand, ProfileRun, CrawledPage, BrandFact
+from app.db.models import Brand, ProfileRun, CrawledPage, BrandFact, User, Organization
 from app.schemas.brand import BrandOnboardRequest, BrandResponse, BrandUpdateRequest
 from app.schemas.profile_run import ProfileRunResponse, ProfileRunCreateRequest
 from app.schemas.crawled_page import CrawledPageResponse, CrawledPageListItem, CrawledPageListResponse
@@ -13,6 +13,7 @@ from app.schemas.brand_fact import BrandFactResponse, BrandFactCreateRequest, Br
 from app.schemas.profile_summary import ProfileSummaryResponse
 from app.crawler.security import SecurityValidationError
 from app.services.profiler_service import ProfilerService
+from app.auth.dependencies import get_current_user, get_current_org, verify_brand_access
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +23,19 @@ router = APIRouter(prefix="/brands", tags=["Brands & Profiling"])
 @router.get(
     "",
     response_model=List[BrandResponse],
-    summary="List all onboarded brands"
+    summary="List all onboarded brands for authorized organization"
 )
 async def list_brands(
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all onboarded brands ordered by creation date."""
-    stmt = select(Brand).order_by(desc(Brand.created_at))
+    """List all onboarded brands belonging to the caller's authorized organization."""
+    stmt = (
+        select(Brand)
+        .where(Brand.organization_id == current_org.id)
+        .order_by(desc(Brand.created_at))
+    )
     res = await db.execute(stmt)
     return res.scalars().all()
 
@@ -41,11 +48,13 @@ async def list_brands(
 )
 async def onboard_and_profile_brand(
     payload: BrandOnboardRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Accepts website URL, validates domain/SSRF safety, registers brand,
-    and initiates asynchronous crawling and fact profiling.
+    Accepts website URL, validates domain/SSRF safety, registers brand under
+    the caller's authorized organization, and initiates asynchronous crawling and fact profiling.
     """
     try:
         brand, run = await ProfilerService.onboard_brand(
@@ -55,6 +64,7 @@ async def onboard_and_profile_brand(
             target_market=payload.target_market,
             language=payload.language,
             page_limit=payload.page_limit or 30,
+            organization_id=current_org.id,
             db=db
         )
         return {
@@ -86,11 +96,14 @@ async def onboard_and_profile_brand(
 )
 async def get_profile_run(
     run_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
     run = await db.get(ProfileRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="ProfileRun not found.")
+    await verify_brand_access(run.brand_id, db, current_org)
     return run
 
 
@@ -101,8 +114,11 @@ async def get_profile_run(
 )
 async def get_brand_profile(
     brand_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
+    await verify_brand_access(brand_id, db, current_org)
     profile = await ProfilerService.get_brand_profile_summary(brand_id, db)
     if not profile:
         raise HTTPException(status_code=404, detail="Brand not found.")
@@ -116,11 +132,11 @@ async def get_brand_profile(
 )
 async def get_brand(
     brand_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    brand = await db.get(Brand, brand_id)
-    if not brand:
-        raise HTTPException(status_code=404, detail="Brand not found.")
+    brand = await verify_brand_access(brand_id, db, current_org)
     return brand
 
 
@@ -132,11 +148,11 @@ async def get_brand(
 async def update_brand(
     brand_id: str,
     payload: BrandUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    brand = await db.get(Brand, brand_id)
-    if not brand:
-        raise HTTPException(status_code=404, detail="Brand not found.")
+    brand = await verify_brand_access(brand_id, db, current_org)
     
     if payload.business_name is not None:
         brand.business_name = payload.business_name
@@ -162,11 +178,11 @@ async def get_crawled_pages(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(15, ge=1, le=100, description="Items per page"),
     page_type: Optional[str] = Query(None, description="Filter by page type"),
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    brand = await db.get(Brand, brand_id)
-    if not brand:
-        raise HTTPException(status_code=404, detail="Brand not found.")
+    await verify_brand_access(brand_id, db, current_org)
 
     base_query = select(CrawledPage).where(CrawledPage.brand_id == brand_id)
     if page_type:
@@ -231,8 +247,12 @@ async def get_crawled_pages(
 async def get_crawled_page_detail(
     brand_id: str,
     page_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
+    await verify_brand_access(brand_id, db, current_org)
+
     page = await db.get(CrawledPage, page_id)
     if not page or page.brand_id != brand_id:
         raise HTTPException(status_code=404, detail="Crawled page not found.")
@@ -266,11 +286,11 @@ async def get_brand_facts(
     brand_id: str,
     fact_type: Optional[str] = Query(None, description="Filter by fact type"),
     status: Optional[str] = Query(None, description="Filter by status: confirmed, pending, rejected"),
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    brand = await db.get(Brand, brand_id)
-    if not brand:
-        raise HTTPException(status_code=404, detail="Brand not found.")
+    await verify_brand_access(brand_id, db, current_org)
 
     query = select(BrandFact).where(BrandFact.brand_id == brand_id)
     if fact_type:
@@ -296,11 +316,11 @@ async def get_brand_facts(
 async def create_brand_fact(
     brand_id: str,
     payload: BrandFactCreateRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    brand = await db.get(Brand, brand_id)
-    if not brand:
-        raise HTTPException(status_code=404, detail="Brand not found.")
+    brand = await verify_brand_access(brand_id, db, current_org)
 
     fact_source_url = None
     if payload.source_url:
@@ -354,8 +374,12 @@ async def update_brand_fact(
     brand_id: str,
     fact_id: str,
     payload: BrandFactUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
+    await verify_brand_access(brand_id, db, current_org)
+
     fact = await db.get(BrandFact, fact_id)
     if not fact or fact.brand_id != brand_id:
         raise HTTPException(status_code=404, detail="BrandFact not found.")
@@ -384,8 +408,12 @@ async def update_brand_fact(
 async def delete_brand_fact(
     brand_id: str,
     fact_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
+    await verify_brand_access(brand_id, db, current_org)
+
     fact = await db.get(BrandFact, fact_id)
     if not fact or fact.brand_id != brand_id:
         raise HTTPException(status_code=404, detail="BrandFact not found.")
@@ -404,11 +432,11 @@ async def delete_brand_fact(
 async def refresh_brand_profile(
     brand_id: str,
     payload: ProfileRunCreateRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    brand = await db.get(Brand, brand_id)
-    if not brand:
-        raise HTTPException(status_code=404, detail="Brand not found.")
+    brand = await verify_brand_access(brand_id, db, current_org)
 
     # Increment profile version for fresh crawl
     brand.profile_version += 1
@@ -444,11 +472,11 @@ async def refresh_brand_profile(
 )
 async def list_brand_profile_runs(
     brand_id: str,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db)
 ):
-    brand = await db.get(Brand, brand_id)
-    if not brand:
-        raise HTTPException(status_code=404, detail="Brand not found.")
+    brand = await verify_brand_access(brand_id, db, current_org)
 
     stmt = select(ProfileRun).where(ProfileRun.brand_id == brand_id).order_by(desc(ProfileRun.started_at))
     res = await db.execute(stmt)

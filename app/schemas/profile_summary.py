@@ -27,3 +27,4 @@ class ProfileSummaryResponse(BaseModel):
     # Data Quality & Coverage Summary
     coverage_summary: Dict[str, Any]
     verification_progress: Dict[str, Any]
+    crawl_summary: Optional[Dict[str, Any]] = None

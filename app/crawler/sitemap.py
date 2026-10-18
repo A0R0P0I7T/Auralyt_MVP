@@ -37,14 +37,39 @@ HIGH_VALUE_KEYWORDS = [
 
 
 def score_url_priority(url: str) -> int:
-    """Return priority score: lower number means higher priority."""
+    """Return priority score: lower number means higher priority.
+    1: Core high-value pages (pricing, plans, products, about, features, solutions)
+    2: General pages, blog posts, news
+    3: Docs, api, guides, faq, support, help
+    4: Legal, terms, privacy, changelog
+    """
     url_lower = url.lower()
-    # Deprioritize help / support / locator / changelog / deep api reference URLs so they don't crowd out core products
-    if any(k in url_lower for k in ("/help", "/support", "/locator", "/store", "/changelog", "/releases", "/rest-api", "/kb/guide")):
+    # Lowest priority (score 4): legal clauses, terms, release logs
+    if any(k in url_lower for k in (
+        "/legal", "/terms", "/privacy", "/changelog", "/releases", "/tags", "/author"
+    )):
+        return 4
+
+    # Deprioritize deep docs, help, support (score 3)
+    if any(k in url_lower for k in (
+        "/help", "/support", "/locator", "/store", "/rest-api", "/kb/guide",
+        "/docs", "/documentation", "/guides", "/api-reference"
+    )):
         return 3
+
+    # High-value brand pages (score 1)
+    if any(k in url_lower for k in (
+        "/pricing", "/plans", "/price", "/tier", "/subscription",
+        "/about", "/product", "/products", "/service", "/services",
+        "/feature", "/features", "/solution", "/solutions", "/use-case",
+        "/enterprise", "/platform", "/overview"
+    )):
+        return 1
+
     for kw in HIGH_VALUE_KEYWORDS:
         if f"/{kw}" in url_lower or f"-{kw}" in url_lower:
             return 1
+
     return 2
 
 

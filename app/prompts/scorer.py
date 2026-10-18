@@ -80,11 +80,20 @@ class PromptScorer:
 
         # 1. Relevance Score (0.0 - 1.0)
         relevance = 0.5
-        if brand_name_lower in text_lower:
-            relevance += 0.3
-        if industry_lower and industry_lower in text_lower:
-            relevance += 0.2
-        relevance = min(1.0, relevance)
+        category_clean = (profile.get_primary_category() or "").lower()
+        forbidden_tokens = profile.get_forbidden_brand_tokens()
+
+        # Heavy penalty if brand name leaks into prompt
+        if any(token in text_lower for token in forbidden_tokens):
+            relevance = 0.1
+        else:
+            if category_clean and any(word in text_lower for word in category_clean.split() if len(word) >= 4):
+                relevance += 0.3
+            if any(a.lower() in text_lower for a in profile.get_clean_audiences()):
+                relevance += 0.1
+            if any(u.lower() in text_lower for u in profile.get_clean_use_cases()):
+                relevance += 0.1
+        relevance = min(1.0, max(0.1, relevance))
 
         # 2. Grounding Score (0.0 - 1.0)
         grounding = 0.0

@@ -1,0 +1,256 @@
+import re
+import sys
+import sqlite3
+import json
+
+sys.stdout.reconfigure(encoding='utf-8')
+
+PRICING_TIER_REGEX = re.compile(r"\b(Free|Starter|Basic|Standard|Plus|Pro|Professional|Premium|Growth|Business|Enterprise|Team|Personal|Developer|Core)\b", re.I)
+PRICE_CURRENCY_REGEX = re.compile(r"(\$|€|£|₹)\s?(\d+(?:,\d{3})*(?:\.\d+)?)\s?(?:/\s?(?:mo|month|yr|year|user|seat))?", re.I)
+
+ALLOWANCE_INDICATORS = (
+    "of list price inference", "list price inference", "with no fees", "allowance",
+    "byok limit", "byok limits", "spend limit", "credit limit", "included credit",
+    "included credits", "free credit", "free credits", "usage limit", "monthly allowance",
+    "free requests", "free tier allowance", "inference / month with no fees",
+    "inference / month", "tokens / month with no fees", "requests / month with no fees"
+)
+
+USAGE_UNIT_REGEX = re.compile(
+    r"(?:/\s*(?:m\b|million|k\b|thousand|1m|1k|1,000|token|tokens|input\s*tokens?|output\s*tokens?|credit|credits|request|requests|query|queries|gb|character|characters|image|images|sec|second|hour)|"
+    r"per\s+(?:m\b|million|k\b|thousand|1m|1k|1,000|token|tokens|input\s*tokens?|output\s*tokens?|credit|credits|request|requests|query|queries|gb|character|characters|image|images|sec|second|hour))",
+    re.I
+)
+
+def extract_all_pricing(page_type, text, page_url=""):
+    facts = []
+    seen_keys = set()
+    
+    # 1. Dedicated tier checks on pricing pages
+    if page_type == "pricing":
+        # Free Tier check
+        free_match = re.search(r"\bFree\b[\s\S]{1,80}?(?:Get started for free|No fees|\$0(?:\s*/\s*(?:mo|month))?|free forever|always free|25\+\s*free models|no credit card)", text, re.I)
+        if free_match:
+            facts.append({
+                "plan_name": "Free",
+                "amount": 0.0,
+                "currency": "USD",
+                "currency_symbol": "$",
+                "unit": "free",
+                "billing_basis": "free",
+                "pricing_type": "free_tier",
+                "formatted_display": "Free: $0 (free tier)",
+                "price": "0.0",
+                "evidence": free_match.group(0).replace("\n", " ").strip()
+            })
+            seen_keys.add(("free", 0.0, "free"))
+            
+        # Pay-as-you-go Platform Fees
+        fee_matches = re.finditer(r"\b(Standard|Business|Team|Pro|Growth)\b[\s\n]{1,25}?(\d+(?:\.\d+)?%)", text, re.I)
+        for fm in fee_matches:
+            tier = fm.group(1).capitalize()
+            pct = fm.group(2)
+            pct_val = float(pct.replace("%", ""))
+            key = (tier.lower(), pct_val, "pay_as_you_go")
+            if key not in seen_keys:
+                seen_keys.add(key)
+                facts.append({
+                    "plan_name": tier,
+                    "amount": pct_val,
+                    "currency": "USD",
+                    "currency_symbol": "%",
+                    "unit": "% platform fee",
+                    "billing_basis": "pay_as_you_go",
+                    "pricing_type": "pay_as_you_go",
+                    "formatted_display": f"{tier}: Pay-as-you-go ({pct} fee)",
+                    "price": pct,
+                    "evidence": fm.group(0).replace("\n", " ").strip()
+                })
+
+    # 2. Price currency regex extraction
+    price_matches = list(PRICE_CURRENCY_REGEX.finditer(text))
+    for pm in price_matches:
+        p_text = pm.group(0).strip()
+        curr_sym = pm.group(1)
+        num_str = pm.group(2)
+        try:
+            num_val = float(num_str.replace(",", ""))
+        except ValueError:
+            continue
+            
+        after_match = text[pm.end():pm.end() + 35].lower()
+        if re.match(r"^\s*(?:\.\d+)?\s*(?:million|billion|trillion|m\b|b\b|k\b|arr\b|series\b|valuation\b|funding\b|revenue\b|round\b|raised\b|prize|prizes|fine|fines|penalty|auction|saved|savings|seed)", after_match):
+            continue
+            
+        snippet_start = max(0, pm.start() - 70)
+        snippet_end = min(len(text), pm.end() + 70)
+        snippet = text[snippet_start:snippet_end].replace("\n", " ").strip()
+        snippet_lower = snippet.lower()
+        
+        # Reject funding, fines, prize pools
+        if any(bad in snippet_lower for bad in (
+            "in prizes", "in prize", "prize pool", "seed round", "series a", "series b",
+            "series c", "raised $", "raised a $", "invest $", "invests $", "fines of",
+            "facing fines", "charity auction", "in fines", "costs by $", "save up to",
+            "saved $", "discount of"
+        )):
+            continue
+            
+        # Detect Quotas, Allowances, or Spend Limits
+        is_allowance = any(k in snippet_lower for k in ALLOWANCE_INDICATORS)
+        
+        # Identify usage unit
+        has_usage_unit = bool(USAGE_UNIT_REGEX.search(after_match)) or bool(USAGE_UNIT_REGEX.search(snippet_lower))
+        
+        # Identify recurring unit
+        has_recurring_unit = bool(re.search(r"(?:/\s*(?:mo|month|yr|year|user|seat|member)|per\s+(?:month|year|user|seat|member)|billed\s+(?:annually|monthly))", snippet_lower))
+        has_package_term = any(k in snippet_lower for k in ("package", "flat rate", "flat fee", "one-time", "starting rate", "costs $", "price:"))
+        
+        # Tier name
+        plan_name = None
+        before_snippet = text[max(0, pm.start() - 40):pm.start()]
+        tier_matches_before = list(PRICING_TIER_REGEX.finditer(before_snippet))
+        if tier_matches_before:
+            plan_name = tier_matches_before[-1].group(0).capitalize()
+        else:
+            after_snippet = text[pm.end():min(len(text), pm.end() + 40)]
+            tier_m_after = PRICING_TIER_REGEX.search(after_snippet)
+            if tier_m_after:
+                plan_name = tier_m_after.group(0).capitalize()
+                
+        # Model / product candidate in snippet
+        model_name = None
+        if has_usage_unit:
+            model_match = re.search(r"\b([A-Za-z0-9\.\-]+(?:\s+[A-Za-z0-9\.\-]+){0,3})\s*[:\-–—]\s*" + re.escape(p_text), snippet)
+            if not model_match:
+                prefix_match = re.search(r"\b([A-Z][a-zA-Z0-9\.\-]+:\s+[A-Z][a-zA-Z0-9\.\-]+(?:\s+[A-Za-z0-9\.\-]+){0,2})", snippet)
+                if prefix_match:
+                    cand = prefix_match.group(1).strip()
+                    if 3 <= len(cand) <= 40:
+                        model_name = cand
+            else:
+                cand_model = model_match.group(1).strip()
+                if 3 <= len(cand_model) <= 40 and not any(k in cand_model.lower() for k in ("price", "pricing", "cost", "from", "starting")):
+                    model_name = cand_model
+
+        if not plan_name and not model_name and not has_usage_unit and not has_recurring_unit and not has_package_term and page_type != "pricing":
+            continue
+
+        if is_allowance:
+            pricing_type = "usage_allowance"
+            billing_basis = "monthly" if "month" in snippet_lower else "unspecified"
+            unit_str = "inference allowance" if "inference" in snippet_lower else "credits allowance"
+            effective_name = plan_name or "Usage Allowance"
+            formatted_display = f"{effective_name}: {curr_sym}{num_val:,.0f} {unit_str}"
+        elif has_usage_unit:
+            pricing_type = "usage_rate"
+            billing_basis = "usage"
+            if "input token" in after_match:
+                unit_str = "1M input tokens" if ("m" in after_match or "1m" in snippet_lower) else "input token"
+            elif "output token" in after_match:
+                unit_str = "1M output tokens" if ("m" in after_match or "1m" in snippet_lower) else "output token"
+            elif "character" in after_match:
+                unit_str = "1M characters" if ("m" in after_match or "1m" in snippet_lower) else "character"
+            elif "input token" in snippet_lower and "output token" not in snippet_lower:
+                unit_str = "1M input tokens" if ("m" in snippet_lower or "1m" in snippet_lower) else "input token"
+            elif "output token" in snippet_lower and "input token" not in snippet_lower:
+                unit_str = "1M output tokens" if ("m" in snippet_lower or "1m" in snippet_lower) else "output token"
+            elif "character" in snippet_lower:
+                unit_str = "1M characters" if ("m" in snippet_lower or "1m" in snippet_lower) else "character"
+            elif "1m" in after_match or "/m" in after_match or "1m" in snippet_lower or "million" in snippet_lower:
+                unit_str = "1M tokens"
+            elif "1k" in after_match or "/k" in after_match or "1k" in snippet_lower or "thousand" in snippet_lower or "1,000" in snippet_lower:
+                unit_str = "1K tokens"
+            elif "request" in after_match or "request" in snippet_lower:
+                unit_str = "request"
+            elif "query" in after_match or "query" in snippet_lower:
+                unit_str = "query"
+            elif "credit" in after_match or "credit" in snippet_lower:
+                unit_str = "credit"
+            elif "image" in after_match or "image" in snippet_lower:
+                unit_str = "image"
+            elif "gb" in after_match or "gb" in snippet_lower:
+                unit_str = "GB"
+            else:
+                unit_str = "token"
+            effective_name = model_name or plan_name or "Usage Rate"
+            formatted_display = f"{effective_name}: {curr_sym}{num_val} / {unit_str}"
+        elif any(u in p_text.lower() or u in snippet_lower for u in ("/yr", "/year", "annually", "per year", "billed annually")):
+            pricing_type = "subscription_plan"
+            billing_basis = "annually"
+            unit_str = "year"
+            effective_name = plan_name or "Subscription"
+            formatted_display = f"{effective_name}: {curr_sym}{num_val:.2f} / {unit_str}".replace(".00 /", " /")
+        elif any(u in p_text.lower() or u in snippet_lower for u in ("/user", "/seat", "/member", "per user", "per seat")):
+            pricing_type = "subscription_plan"
+            billing_basis = "per_user_monthly"
+            unit_str = "user/month"
+            effective_name = plan_name or "Team Plan"
+            formatted_display = f"{effective_name}: {curr_sym}{num_val:.2f} / {unit_str}".replace(".00 /", " /")
+        elif has_recurring_unit or "per month" in snippet_lower or "/mo" in snippet_lower or "/month" in snippet_lower or "billed monthly" in snippet_lower:
+            pricing_type = "subscription_plan"
+            billing_basis = "monthly"
+            unit_str = "month"
+            effective_name = plan_name or "Monthly Plan"
+            formatted_display = f"{effective_name}: {curr_sym}{num_val:.2f} / {unit_str}".replace(".00 /", " /")
+        elif has_package_term or "one-time" in snippet_lower or "flat rate" in snippet_lower:
+            pricing_type = "one_time"
+            billing_basis = "one_time"
+            unit_str = "package"
+            effective_name = plan_name or "Package"
+            formatted_display = f"{effective_name}: {curr_sym}{num_val:.2f}".replace(".00", "")
+        else:
+            pricing_type = "subscription_plan" if page_type == "pricing" and plan_name else "unverified"
+            billing_basis = "unspecified"
+            unit_str = "unspecified"
+            effective_name = plan_name or "Pricing"
+            formatted_display = f"{effective_name}: {curr_sym}{num_val}"
+
+        plan_key = (effective_name.lower(), round(num_val, 4), billing_basis, unit_str, pricing_type)
+        if plan_key in seen_keys:
+            continue
+        seen_keys.add(plan_key)
+
+        curr_code = "USD" if curr_sym == "$" else ("EUR" if curr_sym == "€" else ("GBP" if curr_sym == "£" else ("INR" if curr_sym == "₹" else "USD")))
+        facts.append({
+            "plan_name": effective_name,
+            "amount": num_val,
+            "currency": curr_code,
+            "currency_symbol": curr_sym,
+            "unit": unit_str,
+            "billing_basis": billing_basis,
+            "pricing_type": pricing_type,
+            "formatted_display": formatted_display,
+            "price": str(num_val),
+            "evidence": snippet
+        })
+        
+    return facts
+
+def main():
+    conn = sqlite3.connect("auralyt.db")
+    c = conn.cursor()
+    # 1. Pricing page
+    c.execute("SELECT extracted_text, page_type FROM crawled_pages WHERE id = 'cd98c3fb-708b-4110-814b-64524d889d02'")
+    row = c.fetchone()
+    if row:
+        print("=== EXTRACTED FACTS FOR OPENROUTER PRICING PAGE ===")
+        facts = extract_all_pricing(row[1], row[0])
+        for f in facts:
+            print(f"[{f['pricing_type'].upper()}] {f['formatted_display']}")
+            print(f"  amount: {f['amount']} | unit: {f['unit']} | billing: {f['billing_basis']}")
+            print()
+            
+    # 2. Models page
+    c.execute("SELECT extracted_text, page_type FROM crawled_pages WHERE id = 'c55b0582-9d00-42b1-b265-af86cf946f12'")
+    row = c.fetchone()
+    if row:
+        print("=== EXTRACTED FACTS FOR OPENROUTER MODELS PAGE (FIRST 8) ===")
+        facts = extract_all_pricing(row[1], row[0])
+        for f in facts[:8]:
+            print(f"[{f['pricing_type'].upper()}] {f['formatted_display']}")
+            print(f"  amount: {f['amount']} | unit: {f['unit']} | billing: {f['billing_basis']}")
+            print()
+
+if __name__ == "__main__":
+    main()

@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.db.models import (
     Brand,
+    PromptRun,
     PromptCandidate,
     VisibilityScan,
     VisibilityResult,
@@ -42,6 +43,41 @@ def get_provider_semaphore(provider_name: str) -> asyncio.Semaphore:
 
 class VisibilityEvaluatorService:
     """Core orchestration service for Engine 3 AI Visibility Scans."""
+
+    @staticmethod
+    def calculate_composite_score(
+        mention_rate: float,
+        recommendation_rate: float,
+        target_citation_count: int,
+        total_prompts: int,
+        avg_position: Optional[float] = None
+    ) -> float:
+        """
+        Calculates normalized composite visibility score (0.0 to 100.0).
+        Methodology & weights (DEF-E3-04):
+        - Brand Mention Rate: 40% weight (0 to 40 pts)
+        - Recommendation Rate: 35% weight (0 to 35 pts)
+        - Rank Factor (Reciprocal Rank): 15% weight (0 to 15 pts, based on 1.0 / avg_position)
+        - Target Domain Citation Coverage: 10% weight (0 to 10 pts, based on min(citations / total, 1.0))
+        """
+        if total_prompts <= 0:
+            return 0.0
+
+        mention_component = max(0.0, min(1.0, mention_rate)) * 40.0
+        recommendation_component = max(0.0, min(1.0, recommendation_rate)) * 35.0
+
+        citation_ratio = min(max(0, target_citation_count) / total_prompts, 1.0)
+        citation_component = citation_ratio * 10.0
+
+        rank_component = 0.0
+        if avg_position is not None and avg_position > 0:
+            # Reciprocal rank weighting: Rank 1 -> 15.0 pts; Rank 2 -> 7.5 pts; Rank 8 -> 1.88 pts
+            reciprocal_rank = 1.0 / float(avg_position)
+            rank_component = min(1.0, reciprocal_rank) * 15.0
+
+        composite = mention_component + recommendation_component + citation_component + rank_component
+        return round(min(100.0, max(0.0, composite)), 1)
+
 
     @staticmethod
     async def reconcile_interrupted_scans(db: Optional[AsyncSession] = None) -> int:
@@ -109,27 +145,40 @@ class VisibilityEvaluatorService:
                     logger.info(f"Returning active visibility scan '{existing_active.id}' for brand '{brand_id}' (idempotent)")
                     return existing_active
 
-            # Pin the scan to the latest completed prompt/profile snapshot. A brand
-            # refresh can increment Brand.profile_version before it completes.
-            version_stmt = select(PromptCandidate.profile_version).where(
-                PromptCandidate.brand_id == brand_id,
-                PromptCandidate.is_approved == True,
-                PromptCandidate.is_archived == False,
-            ).order_by(PromptCandidate.profile_version.desc(), PromptCandidate.created_at.desc()).limit(1)
-            version_res = await db.execute(version_stmt)
-            scan_version = version_res.scalar_one_or_none()
-            if scan_version is None:
-                raise ValueError(
-                    "Brand has no approved prompts. Please generate and approve prompts in Engine 2 before scanning."
-                )
+            # Pin the scan to the latest completed prompt run for this brand,
+            # ensuring Engine 3 evaluates the exact fresh set of prompts.
+            latest_run_stmt = select(PromptRun).where(
+                PromptRun.brand_id == brand_id,
+                PromptRun.status == "completed"
+            ).order_by(PromptRun.created_at.desc()).limit(1)
+            latest_run_res = await db.execute(latest_run_stmt)
+            latest_run = latest_run_res.scalar_one_or_none()
 
-            # Select approved, non-archived Engine 2 prompts matching that version.
-            stmt = select(PromptCandidate).where(
-                PromptCandidate.brand_id == brand_id,
-                PromptCandidate.profile_version == scan_version,
-                PromptCandidate.is_approved == True,
-                PromptCandidate.is_archived == False
-            ).order_by(desc(PromptCandidate.quality_score))
+            if latest_run:
+                scan_version = latest_run.profile_version
+                stmt = select(PromptCandidate).where(
+                    PromptCandidate.prompt_run_id == latest_run.id,
+                    PromptCandidate.is_approved.is_(True),
+                    PromptCandidate.is_archived.is_(False)
+                ).order_by(desc(PromptCandidate.quality_score))
+            else:
+                version_stmt = select(PromptCandidate.profile_version).where(
+                    PromptCandidate.brand_id == brand_id,
+                    PromptCandidate.is_approved.is_(True),
+                    PromptCandidate.is_archived.is_(False),
+                ).order_by(PromptCandidate.profile_version.desc(), PromptCandidate.created_at.desc()).limit(1)
+                version_res = await db.execute(version_stmt)
+                scan_version = version_res.scalar_one_or_none()
+                if scan_version is None:
+                    raise ValueError(
+                        "Brand has no approved prompts. Please generate and approve prompts in Engine 2 before scanning."
+                    )
+                stmt = select(PromptCandidate).where(
+                    PromptCandidate.brand_id == brand_id,
+                    PromptCandidate.profile_version == scan_version,
+                    PromptCandidate.is_approved.is_(True),
+                    PromptCandidate.is_archived.is_(False)
+                ).order_by(desc(PromptCandidate.quality_score))
 
             res = await db.execute(stmt)
             approved_prompts = res.scalars().all()
@@ -313,6 +362,11 @@ class VisibilityEvaluatorService:
                     if p_resp.tokens_used:
                         tokens_total += p_resp.tokens_used
 
+                    res_metadata = dict(p_resp.metadata or {})
+                    res_metadata["target_brand_citations"] = list(eval_res.target_brand_citations)
+                    res_metadata["competitor_citations"] = list(eval_res.competitor_citations)
+                    res_metadata["mention_confidence"] = eval_res.mention_confidence
+
                     vis_res = VisibilityResult(
                         scan_id=scan.id,
                         brand_id=brand.id,
@@ -322,7 +376,7 @@ class VisibilityEvaluatorService:
                         model_name=scan.model_name,
                         execution_status="success",
                         raw_response_text=p_resp.text,
-                        raw_response_metadata=p_resp.metadata,
+                        raw_response_metadata=res_metadata,
                         latency_ms=p_resp.latency_ms,
                         tokens_used=p_resp.tokens_used,
                         brand_mentioned=eval_res.brand_mentioned,
@@ -386,11 +440,19 @@ class VisibilityEvaluatorService:
                 recommendation_rate = round(recommendations / total_prompts, 3)
                 avg_position = round(sum(ranked) / len(ranked), 2) if ranked else None
 
-                # Composite Visibility Score (0 - 100)
-                # 50% mention presence + 40% recommendation presence + 10% citation presence (scaled by total_prompts)
-                citation_count = sum(len(r.citations) for r in results_to_persist)
-                citation_factor = min(citation_count / (total_prompts * 2), 1.0) * 10
-                score = round((mention_rate * 50.0) + (recommendation_rate * 40.0) + citation_factor, 1)
+                # Count strictly verified target brand citations (DEF-E3-01)
+                target_citation_count = sum(
+                    len(r.raw_response_metadata.get("target_brand_citations", []))
+                    for r in results_to_persist
+                )
+
+                score = VisibilityEvaluatorService.calculate_composite_score(
+                    mention_rate=mention_rate,
+                    recommendation_rate=recommendation_rate,
+                    target_citation_count=target_citation_count,
+                    total_prompts=total_prompts,
+                    avg_position=avg_position
+                )
 
                 scan.mention_rate = mention_rate
                 scan.recommendation_rate = recommendation_rate

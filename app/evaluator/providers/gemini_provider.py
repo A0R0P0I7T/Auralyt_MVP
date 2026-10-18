@@ -30,7 +30,7 @@ class GeminiModelProvider(AIModelProvider):
     """
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, model_name: Optional[str] = None):
-        self.api_key = api_key or settings.LLM_API_KEY
+        self.api_key = settings.LLM_API_KEY if api_key is None else api_key
         self._default_model = model or model_name or settings.LLM_MODEL or "gemini-1.5-flash"
 
     @property

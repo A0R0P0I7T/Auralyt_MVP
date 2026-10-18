@@ -62,10 +62,18 @@ class PromptIntelligenceService:
                     "Cannot generate prompts for an empty brand profile. "
                     "Please complete website profiling first."
                 )
+            if not normalized_profile.get_primary_category():
+                raise ValueError(
+                    "Cannot generate organic prompts: brand profile has insufficient evidence "
+                    "(missing industry, category, products, or use cases). "
+                    "Please complete website profiling first."
+                )
 
             # The mutable brand counter may point at a pending/failed refresh.
             # Generate only from the completed snapshot returned by Engine 1.
             current_version = normalized_profile.profile_version
+
+            CURRENT_STRATEGY_VERSION = "v2_relevance_freshness"
 
             # 4. Check for cached generation if not force_regenerate
             if not force_regenerate:
@@ -78,18 +86,37 @@ class PromptIntelligenceService:
                 latest_run = res.scalars().first()
 
                 if latest_run:
-                    prompts_stmt = select(PromptCandidate).where(
-                        PromptCandidate.prompt_run_id == latest_run.id,
-                        PromptCandidate.is_archived.is_(False)
-                    ).order_by(desc(PromptCandidate.quality_score))
-                    p_res = await db.execute(prompts_stmt)
-                    existing_prompts = list(p_res.scalars().all())
+                    strat_ver = (latest_run.config_metadata or {}).get("strategy_version")
+                    if strat_ver == CURRENT_STRATEGY_VERSION:
+                        prompts_stmt = select(PromptCandidate).where(
+                            PromptCandidate.prompt_run_id == latest_run.id,
+                            PromptCandidate.is_archived.is_(False)
+                        ).order_by(desc(PromptCandidate.quality_score))
+                        p_res = await db.execute(prompts_stmt)
+                        existing_prompts = list(p_res.scalars().all())
 
-                    if len(existing_prompts) >= prompt_count:
-                        logger.info(f"Reusing cached prompt run {latest_run.id} for brand {brand_id} v{current_version}")
-                        return latest_run, existing_prompts
+                        if len(existing_prompts) >= prompt_count:
+                            logger.info(f"Reusing valid cached prompt run {latest_run.id} for brand {brand_id} v{current_version}")
+                            return latest_run, existing_prompts[:prompt_count]
 
-            # 5. Create new PromptRun
+            # 5. Archive prior active prompts for this brand and current profile version to guarantee clean versioning and prevent stale prompt contamination
+            await db.execute(
+                update(PromptCandidate)
+                .where(
+                    PromptCandidate.brand_id == brand_id,
+                    PromptCandidate.profile_version == current_version,
+                    PromptCandidate.is_archived.is_(False)
+                )
+                .values(is_archived=True)
+            )
+
+            # Determine whether this is a fresh generation or explicit regeneration
+            prior_runs_stmt = select(func.count(PromptRun.id)).where(PromptRun.brand_id == brand_id)
+            prior_runs_res = await db.execute(prior_runs_stmt)
+            prior_runs_count = prior_runs_res.scalar() or 0
+            generation_mode = "regenerated" if prior_runs_count > 0 else "generated"
+
+            # Create new PromptRun
             run = PromptRun(
                 brand_id=brand_id,
                 profile_version=current_version,
@@ -102,6 +129,9 @@ class PromptIntelligenceService:
                     "categories": categories,
                     "language": normalized_profile.primary_language,
                     "force_regenerate": force_regenerate,
+                    "generation_mode": generation_mode,
+                    "strategy_version": CURRENT_STRATEGY_VERSION,
+                    "archetype": normalized_profile.get_domain_archetype(),
                 }
             )
             db.add(run)
@@ -111,28 +141,54 @@ class PromptIntelligenceService:
             start_time = time.time()
 
             try:
-                # 6. Stage B: Intent & Coverage Planning
+                # 6. Stage B: Intent & Coverage Planning with surplus
                 plan = CoveragePlanner.create_plan(
                     profile=normalized_profile,
                     requested_count=prompt_count,
-                    allowed_categories=categories
+                    allowed_categories=categories,
+                    surplus_ratio=1.75
                 )
 
                 # 7. Stage C: Candidate Generation
                 generator = get_prompt_generator()
                 raw_candidates = await generator.generate(normalized_profile, plan)
+                total_generated = len(raw_candidates)
 
                 # 8. Stage D: Quality Validation
                 validated_candidates: List[GeneratedPromptCandidate] = []
+                rejection_log: List[Dict[str, str]] = []
                 for cand in raw_candidates:
-                    is_valid, reason = PromptValidator.validate(cand, normalized_profile)
+                    is_valid, reason = PromptValidator.validate(cand, normalized_profile, reject_brand_mentions=True)
                     if is_valid:
                         validated_candidates.append(cand)
                     else:
+                        rejection_log.append({"prompt": cand.text, "reason": reason})
                         logger.debug(f"Candidate rejected by validator: '{cand.text}' -> {reason}")
 
-                # 9. Stage E: Deduplication & Scoring
+                # 9. Stage E: Deduplication & Replenishment
                 unique_candidates = PromptScorer.deduplicate(validated_candidates)
+
+                # Bounded Replenishment loop if candidates < prompt_count
+                replenishment_passes = 0
+                while len(unique_candidates) < prompt_count and replenishment_passes < 3:
+                    replenishment_passes += 1
+                    needed = prompt_count - len(unique_candidates)
+                    replenish_plan = CoveragePlanner.create_replenishment_plan(
+                        profile=normalized_profile,
+                        needed_count=needed,
+                        allowed_categories=categories
+                    )
+                    replenish_cands = await generator.generate(normalized_profile, replenish_plan)
+                    total_generated += len(replenish_cands)
+
+                    for cand in replenish_cands:
+                        is_valid, reason = PromptValidator.validate(cand, normalized_profile, reject_brand_mentions=True)
+                        if is_valid:
+                            validated_candidates.append(cand)
+                        else:
+                            rejection_log.append({"prompt": cand.text, "reason": reason})
+
+                    unique_candidates = PromptScorer.deduplicate(validated_candidates)
 
                 scored_candidates: List[GeneratedPromptCandidate] = []
                 accepted_so_far: List[GeneratedPromptCandidate] = []
@@ -145,17 +201,14 @@ class PromptIntelligenceService:
                 final_candidates = scored_candidates[:prompt_count]
 
                 # 10. Stage F: Persistence
-                existing_text_stmt = select(PromptCandidate.normalized_text).where(
-                    PromptCandidate.brand_id == brand_id,
-                    PromptCandidate.profile_version == current_version,
-                )
-                existing_text_res = await db.execute(existing_text_stmt)
-                existing_texts = set(existing_text_res.scalars().all())
+                # Deduplicate strictly within this run's final candidates without dropping previous run texts
                 persisted_models: List[PromptCandidate] = []
+                seen_this_run = set()
                 for fc in final_candidates:
                     normalized_text = normalize_prompt_text(fc.text)
-                    if normalized_text in existing_texts:
+                    if normalized_text in seen_this_run:
                         continue
+                    seen_this_run.add(normalized_text)
                     model = PromptCandidate(
                         brand_id=brand_id,
                         prompt_run_id=run.id,
@@ -179,14 +232,23 @@ class PromptIntelligenceService:
                     )
                     db.add(model)
                     persisted_models.append(model)
-                    existing_texts.add(normalized_text)
 
-                # Update Run Status
+                # Update Run Status with full lifecycle diagnostics
                 duration = time.time() - start_time
                 run.status = "completed"
                 run.prompts_generated = len(persisted_models)
                 run.duration_seconds = round(duration, 2)
                 run.completed_at = utc_now()
+                meta = dict(run.config_metadata or {})
+                meta["diagnostics"] = {
+                    "requested_count": prompt_count,
+                    "generated_count": total_generated,
+                    "accepted_count": len(final_candidates),
+                    "persisted_count": len(persisted_models),
+                    "replenishment_passes": replenishment_passes,
+                    "rejections_count": len(rejection_log),
+                }
+                run.config_metadata = meta
 
                 await db.commit()
                 for pm in persisted_models:

@@ -12,11 +12,59 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    memberships: Mapped[List["OrganizationMember"]] = relationship("OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
+    brands: Mapped[List["Brand"]] = relationship("Brand", back_populates="organization")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    memberships: Mapped[List["OrganizationMember"]] = relationship("OrganizationMember", back_populates="user", cascade="all, delete-orphan")
+
+
+class OrganizationMember(Base):
+    __tablename__ = "organization_members"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), default="owner", nullable=False)  # owner, admin, member
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    # Relationships
+    organization: Mapped["Organization"] = relationship("Organization", back_populates="memberships")
+    user: Mapped["User"] = relationship("User", back_populates="memberships")
+
+    __table_args__ = (
+        Index("ix_org_members_user_org", "user_id", "organization_id", unique=True),
+    )
+
+
 class Brand(Base):
     __tablename__ = "brands"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    organization_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    organization_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
     domain: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     business_name: Mapped[str] = mapped_column(String(255), nullable=False)
     industry: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -28,6 +76,7 @@ class Brand(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     # Relationships
+    organization: Mapped[Optional["Organization"]] = relationship("Organization", back_populates="brands")
     runs: Mapped[List["ProfileRun"]] = relationship("ProfileRun", back_populates="brand", cascade="all, delete-orphan", order_by="desc(ProfileRun.started_at)")
     pages: Mapped[List["CrawledPage"]] = relationship("CrawledPage", back_populates="brand", cascade="all, delete-orphan")
     facts: Mapped[List["BrandFact"]] = relationship("BrandFact", back_populates="brand", cascade="all, delete-orphan")

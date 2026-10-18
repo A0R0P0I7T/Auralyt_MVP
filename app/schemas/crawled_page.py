@@ -27,6 +27,7 @@ class CrawledPageResponse(BaseModel):
     extraction_status: str
     error_details: Optional[str] = None
     used_js: bool
+    extracted_facts: List[Dict[str, Any]] = []
 
 
 class CrawledPageListItem(BaseModel):
@@ -41,6 +42,7 @@ class CrawledPageListItem(BaseModel):
     extraction_status: str
     fetched_at: datetime
     used_js: bool
+    facts_count: int = 0
 
 
 class CrawledPageListResponse(BaseModel):

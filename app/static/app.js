@@ -1,3 +1,235 @@
+// ==========================================
+// Authentication & Multi-Tenancy Management
+// ==========================================
+const AUTH_TOKEN_KEY = "auralyt_token";
+let currentAuthUser = null;
+let currentAuthOrg = null;
+let authModalMode = "login"; // "login" or "register"
+
+function getAuthToken() {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+function setAuthToken(token) {
+  if (token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+}
+
+function clearAuthSession() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  currentAuthUser = null;
+  currentAuthOrg = null;
+  updateAuthHeaderUI();
+}
+
+function updateAuthHeaderUI() {
+  const userBadge = document.getElementById("auth-user-badge");
+  const logoutBtn = document.getElementById("auth-logout-btn");
+  const loginBtn = document.getElementById("auth-login-btn");
+  const orgNameEl = document.getElementById("auth-org-name");
+  const userEmailEl = document.getElementById("auth-user-email");
+
+  if (currentAuthUser && currentAuthOrg) {
+    if (orgNameEl) orgNameEl.innerText = currentAuthOrg.name;
+    if (userEmailEl) userEmailEl.innerText = currentAuthUser.email;
+    if (userBadge) userBadge.style.display = "flex";
+    if (logoutBtn) logoutBtn.style.display = "inline-block";
+    if (loginBtn) loginBtn.style.display = "none";
+  } else {
+    if (userBadge) userBadge.style.display = "none";
+    if (logoutBtn) logoutBtn.style.display = "none";
+    if (loginBtn) loginBtn.style.display = "inline-block";
+  }
+}
+
+function showAuthModal(mode = "login") {
+  authModalMode = mode;
+  const modal = document.getElementById("auth-modal");
+  const title = document.getElementById("auth-modal-title");
+  const subtitle = document.getElementById("auth-modal-subtitle");
+  const nameGroup = document.getElementById("auth-name-group");
+  const orgGroup = document.getElementById("auth-org-group");
+  const submitBtn = document.getElementById("auth-submit-btn");
+  const switchPrompt = document.getElementById("auth-switch-prompt");
+  const switchBtn = document.getElementById("auth-switch-btn");
+  const errorBox = document.getElementById("auth-modal-error");
+
+  if (errorBox) errorBox.style.display = "none";
+
+  if (mode === "register") {
+    if (title) title.innerText = "Create Organization Account";
+    if (subtitle) subtitle.innerText = "Register your organization to begin tracking AI visibility.";
+    if (nameGroup) nameGroup.style.display = "block";
+    if (orgGroup) orgGroup.style.display = "block";
+    if (submitBtn) submitBtn.innerText = "Create Account & Sign In";
+    if (switchPrompt) switchPrompt.innerText = "Already have an account?";
+    if (switchBtn) switchBtn.innerText = "Sign in to existing account";
+  } else {
+    if (title) title.innerText = "Sign in to Auralyt";
+    if (subtitle) subtitle.innerText = "Enter your credentials to access protected brand data and engines.";
+    if (nameGroup) nameGroup.style.display = "none";
+    if (orgGroup) orgGroup.style.display = "none";
+    if (submitBtn) submitBtn.innerText = "Sign In";
+    if (switchPrompt) switchPrompt.innerText = "Don't have an account?";
+    if (switchBtn) switchBtn.innerText = "Create Organization Account";
+  }
+
+  if (modal) modal.style.display = "flex";
+}
+
+function hideAuthModal() {
+  const modal = document.getElementById("auth-modal");
+  if (modal) modal.style.display = "none";
+}
+
+function toggleAuthMode() {
+  showAuthModal(authModalMode === "login" ? "register" : "login");
+}
+
+function fillAdminCredentials() {
+  const emailInput = document.getElementById("auth-email");
+  const passInput = document.getElementById("auth-password");
+  if (emailInput) emailInput.value = "admin@auralyt.ai";
+  if (passInput) passInput.value = "AuralytAdmin2026!";
+  if (authModalMode !== "login") showAuthModal("login");
+}
+
+async function checkAuthStatus() {
+  const token = getAuthToken();
+  if (!token) {
+    updateAuthHeaderUI();
+    return false;
+  }
+  try {
+    const res = await _rawFetch("/api/auth/me", {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      currentAuthUser = data.user;
+      currentAuthOrg = data.active_organization || (data.organizations && data.organizations[0]);
+      updateAuthHeaderUI();
+      return true;
+    } else {
+      clearAuthSession();
+      return false;
+    }
+  } catch (err) {
+    console.error("Auth status verification error:", err);
+    clearAuthSession();
+    return false;
+  }
+}
+
+async function handleAuthSubmit(event) {
+  event.preventDefault();
+  const errorBox = document.getElementById("auth-modal-error");
+  if (errorBox) errorBox.style.display = "none";
+
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-password").value;
+  const fullName = document.getElementById("auth-full-name")?.value.trim() || "";
+  const orgName = document.getElementById("auth-org-name-input")?.value.trim() || "";
+  const submitBtn = document.getElementById("auth-submit-btn");
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerText = authModalMode === "register" ? "Registering..." : "Signing in...";
+  }
+
+  try {
+    let endpoint = authModalMode === "register" ? "/api/auth/register" : "/api/auth/login";
+    let body = authModalMode === "register"
+      ? { email, password, full_name: fullName, organization_name: orgName }
+      : { email, password };
+
+    const res = await _rawFetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || "Authentication failed. Please verify credentials.");
+    }
+
+    setAuthToken(data.access_token);
+    await checkAuthStatus();
+    hideAuthModal();
+
+    // Reload active brands and refresh dashboard
+    await initBrandSelector();
+  } catch (err) {
+    if (errorBox) {
+      errorBox.innerText = err.message || "Authentication error.";
+      errorBox.style.display = "block";
+    }
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerText = authModalMode === "register" ? "Create Account & Sign In" : "Sign In";
+    }
+  }
+}
+
+async function handleLogout() {
+  try {
+    const token = getAuthToken();
+    if (token) {
+      await _rawFetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+    }
+  } catch (e) {
+    console.warn("Logout error:", e);
+  } finally {
+    clearAuthSession();
+    currentBrandId = null;
+    const select = document.getElementById("global-brand-select");
+    if (select) select.innerHTML = '<option value="">Select Brand...</option>';
+    showAuthModal("login");
+  }
+}
+
+// Global Fetch Interceptor to inject Bearer token
+const _rawFetch = window.fetch;
+window.fetch = async function(resource, init = {}) {
+  const token = getAuthToken();
+  const url = typeof resource === "string" ? resource : (resource?.url || "");
+
+  if (url.startsWith("/api") && !url.startsWith("/api/auth/login") && !url.startsWith("/api/auth/register")) {
+    init = init || {};
+    init.headers = init.headers || {};
+    if (init.headers instanceof Headers) {
+      if (token && !init.headers.has("Authorization")) {
+        init.headers.set("Authorization", `Bearer ${token}`);
+      }
+    } else if (Array.isArray(init.headers)) {
+      if (token && !init.headers.some(([k]) => k.toLowerCase() === "authorization")) {
+        init.headers.push(["Authorization", `Bearer ${token}`]);
+      }
+    } else {
+      if (token && !init.headers["Authorization"]) {
+        init.headers["Authorization"] = `Bearer ${token}`;
+      }
+    }
+  }
+
+  const response = await _rawFetch(resource, init);
+
+  if (response.status === 401 && url.startsWith("/api") && !url.startsWith("/api/auth/")) {
+    console.warn("Unauthorized request to", url, ". Opening auth modal.");
+    showAuthModal("login");
+  }
+
+  return response;
+};
+
 let currentBrandId = null;
 let currentRunId = null;
 let pollInterval = null;
@@ -10,6 +242,7 @@ let currentPromptsData = [];
 let currentScanId = null;
 let evalPollInterval = null;
 let currentVisibilityResults = [];
+let currentScansList = [];
 
 function switchTab(tabName) {
   document.querySelectorAll(".tab-content").forEach(el => el.style.display = "none");
@@ -18,9 +251,12 @@ function switchTab(tabName) {
   const targetTab = document.getElementById(`tab-${tabName}`);
   if (targetTab) targetTab.style.display = "block";
 
-  const btn = Array.from(document.querySelectorAll(".nav-btn")).find(b => b.getAttribute("onclick")?.includes(tabName));
+  const btn = document.getElementById(`nav-${tabName}`) || Array.from(document.querySelectorAll(".nav-btn")).find(b => b.getAttribute("onclick")?.includes(tabName));
   if (btn) btn.classList.add("active");
 
+  if (tabName === "experiment" && currentBrandId && currentScanId) {
+    loadAndRenderExperimentResults(currentBrandId, currentScanId);
+  }
   if (tabName === "profile" && currentBrandId) loadBrandProfile(currentBrandId);
   if (tabName === "facts" && currentBrandId) renderFactsList();
   if (tabName === "prompts" && currentBrandId) {
@@ -29,6 +265,422 @@ function switchTab(tabName) {
   }
   if (tabName === "pages" && currentBrandId) loadCrawledPages(1);
   if (tabName === "evaluator" && currentBrandId) loadVisibilityData();
+}
+
+// ==========================================
+// Minimal End-to-End Experiment Orchestration
+// ==========================================
+
+function updateExperimentStep(stepNum, status, detail) {
+  const badge = document.getElementById(`exp-step-${stepNum}-status`);
+  const detailEl = document.getElementById(`exp-step-${stepNum}-detail`);
+  if (!badge) return;
+
+  badge.innerText = status;
+  if (status === "RUNNING") {
+    badge.className = "badge badge-pending";
+  } else if (status === "COMPLETED") {
+    badge.className = "badge badge-completed";
+  } else if (status === "FAILED") {
+    badge.className = "badge badge-failed";
+  } else {
+    badge.className = "badge";
+  }
+
+  if (detailEl && detail) {
+    detailEl.innerText = detail;
+  }
+}
+
+function updateExperimentProgress(pct, msg) {
+  const bar = document.getElementById("exp-progress-bar");
+  const msgEl = document.getElementById("exp-progress-msg");
+  if (bar) bar.style.width = `${pct}%`;
+  if (msgEl && msg) msgEl.innerText = msg;
+}
+
+async function handleRunExperiment(event) {
+  if (event) event.preventDefault();
+
+  const urlInput = document.getElementById("exp-website-url");
+  const countInput = document.getElementById("exp-prompt-count");
+  const providerInput = document.getElementById("exp-provider");
+  const errorBox = document.getElementById("exp-error");
+  const runBtn = document.getElementById("exp-run-btn");
+  const progressCard = document.getElementById("exp-progress-card");
+  const resultsContainer = document.getElementById("exp-results-container");
+
+  const websiteUrl = urlInput.value.trim();
+  const promptCount = parseInt(countInput.value) || 20;
+  const provider = providerInput.value || "gemini";
+
+  errorBox.style.display = "none";
+  errorBox.innerText = "";
+  resultsContainer.style.display = "none";
+  progressCard.style.display = "block";
+  runBtn.disabled = true;
+  runBtn.innerText = "⏳ Running Pipeline...";
+
+  // Reset Stepper
+  updateExperimentStep(1, "RUNNING", "Crawling website & extracting ground truth facts...");
+  updateExperimentStep(2, "WAITING", "Synthesize grounded buyer prompts");
+  updateExperimentStep(3, "WAITING", "Query AI model & evaluate visibility");
+  updateExperimentProgress(5, "Initiating Engine 1 website profiler...");
+
+  const startTime = Date.now();
+  const timer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const el = document.getElementById("exp-progress-elapsed");
+    if (el) el.innerText = `${elapsed}s elapsed`;
+  }, 1000);
+
+  try {
+    // -----------------------------------------------------------------
+    // STEP 1: Engine 1 (Website Profiling & Fact Extraction)
+    // -----------------------------------------------------------------
+    updateExperimentProgress(15, "Engine 1: Dispatching crawl request...");
+    const onboardRes = await fetch("/api/brands/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        website_url: websiteUrl,
+        page_limit: 10
+      })
+    });
+
+    const onboardData = await onboardRes.json();
+    if (!onboardRes.ok) {
+      throw new Error(`Engine 1 initiation failed: ${onboardData.detail || "URL validation or crawl error"}`);
+    }
+
+    const brandId = onboardData.brand_id;
+    const runId = onboardData.run_id;
+    currentBrandId = brandId;
+    currentRunId = runId;
+
+    // Poll profile run until completed or failed
+    let e1Completed = false;
+    let pollAttempts = 0;
+    while (!e1Completed) {
+      await new Promise(r => setTimeout(r, 1200));
+      pollAttempts++;
+      const runRes = await fetch(`/api/brands/profile-runs/${runId}`);
+      if (!runRes.ok) continue;
+      const runData = await runRes.json();
+
+      const discovered = runData.pages_discovered || 0;
+      const succeeded = runData.pages_succeeded || 0;
+      updateExperimentStep(1, "RUNNING", `Pages: ${succeeded} succeeded / ${discovered} discovered`);
+      const pct = Math.min(35, 15 + Math.floor(pollAttempts * 2));
+      updateExperimentProgress(pct, `Engine 1: Crawling website (${succeeded} pages parsed)...`);
+
+      if (runData.status === "completed" || runData.status === "completed_with_warnings") {
+        e1Completed = true;
+        updateExperimentStep(1, "COMPLETED", `${succeeded} pages crawled & facts synthesized`);
+      } else if (runData.status === "failed") {
+        throw new Error(`Engine 1 failed: ${runData.error_summary || "Crawl interrupted"}`);
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // STEP 2: Engine 2 (Grounded Prompt Intelligence)
+    // -----------------------------------------------------------------
+    updateExperimentStep(2, "RUNNING", `Synthesizing ${promptCount} grounded prompts...`);
+    updateExperimentProgress(45, `Engine 2: Generating ${promptCount} buyer prompts from profile facts...`);
+
+    const genRes = await fetch(`/api/brands/${brandId}/prompts/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt_count: promptCount,
+        force_regenerate: true
+      })
+    });
+
+    const genData = await genRes.json();
+    if (!genRes.ok) {
+      throw new Error(`Engine 2 failed: ${genData.detail || "Could not generate grounded prompts"}`);
+    }
+
+    const generatedCount = genData.prompts_generated || promptCount;
+    updateExperimentStep(2, "COMPLETED", `${generatedCount} grounded prompts generated & approved`);
+    updateExperimentProgress(60, `Engine 2 complete (${generatedCount} prompts). Starting Engine 3...`);
+
+    // -----------------------------------------------------------------
+    // STEP 3: Engine 3 (AI Visibility Evaluation via Provider)
+    // -----------------------------------------------------------------
+    updateExperimentStep(3, "RUNNING", `Dispatching ${generatedCount} prompts to ${provider.toUpperCase()}...`);
+    updateExperimentProgress(65, `Engine 3: Initiating visibility scan via ${provider}...`);
+
+    const scanRes = await fetch(`/api/brands/${brandId}/visibility/scans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: provider,
+        max_prompts: promptCount,
+        force_rescan: true
+      })
+    });
+
+    const scanData = await scanRes.json();
+    if (!scanRes.ok) {
+      throw new Error(`Engine 3 initiation failed: ${scanData.detail || "Scan dispatch error"}`);
+    }
+
+    const scanId = scanData.id;
+    currentScanId = scanId;
+
+    // Poll scan until completed or failed
+    let e3Completed = false;
+    while (!e3Completed) {
+      await new Promise(r => setTimeout(r, 1500));
+      const pollRes = await fetch(`/api/brands/${brandId}/visibility/scans/${scanId}`);
+      if (!pollRes.ok) continue;
+      const pollData = await pollRes.json();
+
+      const done = pollData.prompts_completed || 0;
+      const total = pollData.prompts_selected || promptCount;
+      updateExperimentStep(3, "RUNNING", `Evaluating: ${done} / ${total} prompts processed`);
+      const pct = Math.min(95, 65 + Math.floor((done / Math.max(1, total)) * 30));
+      updateExperimentProgress(pct, `Engine 3: Querying ${provider} (${done}/${total} completed)...`);
+
+      if (pollData.status === "completed" || pollData.status === "completed_with_warnings") {
+        e3Completed = true;
+        updateExperimentStep(3, "COMPLETED", `Score: ${pollData.visibility_score != null ? Number(pollData.visibility_score).toFixed(1) : "N/A"}/100`);
+      } else if (pollData.status === "failed") {
+        throw new Error(`Engine 3 failed: ${pollData.error_summary || "Visibility evaluation failed"}`);
+      }
+    }
+
+    updateExperimentProgress(100, "Pipeline completed! Loading full visibility report...");
+    clearInterval(timer);
+
+    // -----------------------------------------------------------------
+    // STEP 4: Render Complete Results
+    // -----------------------------------------------------------------
+    await loadAndRenderExperimentResults(brandId, scanId);
+
+    // Save active experiment for refresh persistence
+    localStorage.setItem("auralyt_active_experiment", JSON.stringify({ brand_id: brandId, scan_id: scanId }));
+    const url = new URL(window.location);
+    url.searchParams.set("brand_id", brandId);
+    url.searchParams.set("scan_id", scanId);
+    window.history.replaceState({}, "", url);
+
+    await initBrandSelector();
+  } catch (err) {
+    console.error("Experiment pipeline error:", err);
+    clearInterval(timer);
+    errorBox.innerText = err.message || "An unexpected error occurred during pipeline execution.";
+    errorBox.style.display = "block";
+    updateExperimentProgress(0, "Pipeline interrupted due to an error.");
+  } finally {
+    runBtn.disabled = false;
+    runBtn.innerText = "🚀 Run Experiment";
+  }
+}
+
+async function loadAndRenderExperimentResults(brandId, scanId) {
+  const container = document.getElementById("exp-results-container");
+  const cardsContainer = document.getElementById("exp-results-cards");
+  const countLabel = document.getElementById("exp-results-count-label");
+  if (!container || !cardsContainer) return;
+
+  try {
+    const [scanRes, resultsRes, brandRes] = await Promise.all([
+      fetch(`/api/brands/${brandId}/visibility/scans/${scanId}`),
+      fetch(`/api/brands/${brandId}/visibility/scans/${scanId}/results`),
+      fetch(`/api/brands/${brandId}`)
+    ]);
+
+    if (!scanRes.ok || !resultsRes.ok) {
+      throw new Error("Failed to load experiment results from server.");
+    }
+
+    const scan = await scanRes.json();
+    const resultsData = await resultsRes.json();
+    const brand = brandRes.ok ? await brandRes.json() : { business_name: "Brand", domain: "" };
+
+    const results = resultsData.results || resultsData.items || [];
+    currentVisibilityResults = results;
+
+    // 2. Populate Metrics Cards
+    const scoreEl = document.getElementById("exp-score");
+    const mentionEl = document.getElementById("exp-mention-rate");
+    const recEl = document.getElementById("exp-recommend-rate");
+    const promptsCountEl = document.getElementById("exp-prompts-count");
+
+    if (scoreEl) scoreEl.innerText = scan.visibility_score != null ? `${Number(scan.visibility_score).toFixed(1)}` : "N/A";
+    if (mentionEl) mentionEl.innerText = scan.mention_rate != null ? `${(Number(scan.mention_rate) * 100).toFixed(0)}%` : "N/A";
+    if (recEl) recEl.innerText = scan.recommendation_rate != null ? `${(Number(scan.recommendation_rate) * 100).toFixed(0)}%` : "N/A";
+    
+    const completed = scan.prompts_completed != null ? scan.prompts_completed : results.length;
+    const selected = scan.prompts_selected != null ? scan.prompts_selected : results.length;
+    if (promptsCountEl) promptsCountEl.innerText = `${completed} / ${selected}`;
+
+    // 3. Meta info banner
+    const brandNameEl = document.getElementById("exp-brand-name");
+    const brandDomainEl = document.getElementById("exp-brand-domain");
+    const modelBadge = document.getElementById("exp-model-badge");
+    const durationEl = document.getElementById("exp-duration");
+    const tokensEl = document.getElementById("exp-total-tokens");
+
+    if (brandNameEl) brandNameEl.innerText = brand.business_name || brand.domain;
+    if (brandDomainEl) brandDomainEl.innerText = brand.domain;
+    if (modelBadge) modelBadge.innerText = `${(scan.provider || "").toUpperCase()} (${scan.model_name || "default"})`;
+    
+    if (durationEl) {
+      if (scan.duration_seconds != null) {
+        durationEl.innerText = `${Number(scan.duration_seconds).toFixed(1)}s`;
+      } else if (scan.completed_at && scan.started_at) {
+        durationEl.innerText = `${((new Date(scan.completed_at) - new Date(scan.started_at)) / 1000).toFixed(1)}s`;
+      } else {
+        durationEl.innerText = "-";
+      }
+    }
+
+    let totalTokens = 0;
+    for (const r of results) {
+      if (r.tokens_used) totalTokens += r.tokens_used;
+    }
+    if (tokensEl) tokensEl.innerText = totalTokens > 0 ? `${totalTokens.toLocaleString()} tokens` : (scan.tokens_consumed ? `${scan.tokens_consumed} tokens` : "N/A");
+
+    if (countLabel) countLabel.innerText = `${results.length} Prompts Evaluated`;
+
+    // 4. Render prompt evaluation cards
+    if (results.length === 0) {
+      cardsContainer.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 2rem;">No prompt evaluations recorded for this scan.</div>`;
+    } else {
+      cardsContainer.innerHTML = results.map(r => {
+        const isFailed = r.execution_status === "failed";
+
+        let recBadge = "";
+        if (isFailed) {
+          recBadge = `<span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 1px dashed rgba(148, 163, 184, 0.4);">UNEVALUATED</span>`;
+        } else if (r.recommendation_status === "recommended") {
+          recBadge = `<span class="badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);">RECOMMENDED</span>`;
+        } else if (r.recommendation_status === "neutral_mention") {
+          recBadge = `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4);">NEUTRAL MENTION</span>`;
+        } else if (r.recommendation_status === "not_recommended") {
+          recBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">NOT RECOMMENDED</span>`;
+        } else {
+          recBadge = `<span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #94a3b8;">NOT MENTIONED</span>`;
+        }
+
+        let mentionBadge = "";
+        if (isFailed) {
+          mentionBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">QUERY FAILED</span>`;
+        } else if (r.brand_mentioned) {
+          mentionBadge = `<span class="badge badge-completed">MENTIONED</span>`;
+        } else {
+          mentionBadge = `<span class="badge badge-failed">NOT MENTIONED</span>`;
+        }
+
+        const pos = (!isFailed) ? (r.comparative_position || r.comparative_positioning) : null;
+        const posChip = pos
+          ? `<span class="badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); text-transform: uppercase;">${escapeHtml(pos.replace(/_/g, ' '))}</span>`
+          : "";
+
+        const rank = (!isFailed) ? (r.visibility_rank || r.position_in_list) : null;
+        const rankChip = rank
+          ? `<span class="badge" style="background: #1e293b; color: #facc15; font-weight: 600;">Rank #${rank}</span>`
+          : "";
+
+        const latencyVal = r.latency_ms != null ? r.latency_ms : (r.execution_time_ms || 0);
+        const tokensVal = r.tokens_used != null ? `${r.tokens_used} tok` : "";
+        const statSnippet = `<span style="font-size: 0.75rem; color: var(--text-muted);">${latencyVal}ms ${tokensVal ? '• ' + tokensVal : ''}</span>`;
+
+        const competitors = r.competitor_mentions || [];
+        const compHtml = competitors.length > 0
+          ? `<div style="display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
+               <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Competitors Cited:</span>
+               ${competitors.map(c => `<span style="background: #1e293b; border: 1px solid #334155; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; color: #f1f5f9;">${escapeHtml(c)}</span>`).join("")}
+             </div>`
+          : "";
+
+        const providerCitations = r.provider_citations || [];
+        const responseCitations = r.response_citations || (providerCitations.length === 0 ? (r.citations || []) : []);
+        const renderCits = (label, list) => list.length > 0
+          ? `<div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
+               <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">${label}:</span>
+               ${list.map(c => {
+                 const url = typeof c === 'string' ? c : (c.url || '#');
+                 const title = typeof c === 'string' ? c : (c.title || c.url);
+                 return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="font-size: 0.75rem; color: var(--accent-primary); background: rgba(59, 130, 246, 0.1); padding: 0.15rem 0.5rem; border-radius: 4px; text-decoration: none; border: 1px solid rgba(59, 130, 246, 0.25);">${escapeHtml(title)}</a>`;
+               }).join("")}
+             </div>`
+          : "";
+        const citHtml = (providerCitations.length > 0 || responseCitations.length > 0)
+          ? `${renderCits("Grounding Sources", providerCitations)}${renderCits("Cited Links", responseCitations)}`
+          : "";
+
+        const contextHtml = r.mention_context
+          ? `<div style="background: #0f172a; border-left: 3px solid ${r.brand_mentioned ? 'var(--accent-success)' : 'var(--border-color)'}; padding: 0.6rem 0.85rem; border-radius: 0 6px 6px 0; font-size: 0.85rem; color: #cbd5e1; margin-top: 0.6rem; font-style: italic;">
+               "${escapeHtml(r.mention_context)}"
+             </div>`
+          : "";
+
+        const errorHtml = isFailed && r.error_details
+          ? `<div style="background: rgba(239, 68, 68, 0.1); border-left: 3px solid #ef4444; padding: 0.5rem 0.85rem; border-radius: 0 4px 4px 0; font-size: 0.85rem; color: #fca5a5; margin-top: 0.6rem;">
+               <strong>Query Error:</strong> ${escapeHtml(r.error_details)}
+             </div>`
+          : "";
+
+        const promptId = r.prompt_id;
+        const promptEvidenceBtn = promptId
+          ? `<button class="btn btn-secondary btn-sm" onclick="openPromptEvidenceModal('${promptId}')" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
+               📋 Grounding Facts
+             </button>`
+          : "";
+
+        return `
+          <div class="card" style="margin-bottom: 1rem; padding: 1.25rem; background: #131c2e; border: 1px solid var(--border-color);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+              <div style="flex: 1; min-width: 250px;">
+                <div style="font-size: 0.95rem; font-weight: 600; color: #f8fafc; line-height: 1.4;">
+                  ${escapeHtml(r.prompt_text)}
+                </div>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
+                  ${mentionBadge}
+                  ${recBadge}
+                  ${posChip}
+                  ${rankChip}
+                  ${statSnippet}
+                </div>
+              </div>
+              <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                ${promptEvidenceBtn}
+                <button class="btn btn-secondary btn-sm" onclick="openRawResponseModal('${r.id}')" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
+                  🔍 Inspect Raw AI Response
+                </button>
+              </div>
+            </div>
+
+            ${errorHtml}
+            ${contextHtml}
+            ${compHtml}
+            ${citHtml}
+          </div>
+        `;
+      }).join("");
+    }
+
+    container.style.display = "block";
+  } catch (err) {
+    console.error("Error loading experiment results:", err);
+  }
+}
+
+function viewBrandIntermediateProfile() {
+  if (currentBrandId) {
+    switchTab("profile");
+  }
+}
+
+function viewBrandIntermediatePrompts() {
+  if (currentBrandId) {
+    switchTab("prompts");
+  }
 }
 
 async function handleOnboard(event) {
@@ -138,13 +790,25 @@ async function loadBrandProfile(brandId) {
     // Products
     const prodList = document.getElementById("products-list");
     if (profileData.products_and_services.length === 0) {
-      prodList.innerHTML = `<div style="color: var(--text-muted); font-size: 0.9rem;">No products or services detected yet.</div>`;
+      prodList.innerHTML = `<div style="color: var(--text-muted); font-size: 0.9rem;">No genuine products or services detected.</div>`;
     } else {
       prodList.innerHTML = profileData.products_and_services.map(p => {
-        const val = typeof p.value === "object" ? (p.value.name + (p.value.description ? ` — ${p.value.description}` : "")) : p.value;
+        let name = "";
+        let details = "";
+        if (typeof p.value === "object" && p.value !== null) {
+          name = p.value.name || p.value.title || "Product";
+          const type = p.value.type ? `<span class="badge" style="background: #1e293b; font-size: 0.75rem; margin-left: 0.5rem;">${escapeHtml(p.value.type)}</span>` : "";
+          const desc = p.value.description ? `<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">${escapeHtml(p.value.description)}</div>` : "";
+          details = `${type}${desc}`;
+        } else {
+          name = String(p.value);
+        }
         return `
           <div style="background: #0f172a; padding: 0.75rem 1rem; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 0.95rem;">${escapeHtml(val)}</span>
+            <div>
+              <span style="font-size: 0.95rem; font-weight: 500;">📦 ${escapeHtml(name)}</span>
+              ${details}
+            </div>
             <button class="btn btn-secondary btn-sm" onclick="openEvidenceModal('${p.fact_id}')">Inspect Source</button>
           </div>
         `;
@@ -153,22 +817,58 @@ async function loadBrandProfile(brandId) {
 
     // Audiences
     const audList = document.getElementById("audience-list");
-    audList.innerHTML = profileData.target_audience.length ? profileData.target_audience.map(a => `<li>${escapeHtml(a.value)}</li>`).join("") : `<li style="color: var(--text-muted)">No specific audience statements found</li>`;
+    audList.innerHTML = profileData.target_audience.length ? profileData.target_audience.map(a => `<li>${escapeHtml(typeof a.value === 'object' ? JSON.stringify(a.value) : a.value)}</li>`).join("") : `<li style="color: var(--text-muted)">No specific audience statements found</li>`;
 
     // Use cases
     const ucList = document.getElementById("usecases-list");
-    ucList.innerHTML = profileData.use_cases.length ? profileData.use_cases.map(u => `<li>${escapeHtml(u.value)}</li>`).join("") : `<li style="color: var(--text-muted)">No use cases detected</li>`;
+    ucList.innerHTML = profileData.use_cases.length ? profileData.use_cases.map(u => `<li>${escapeHtml(typeof u.value === 'object' ? JSON.stringify(u.value) : u.value)}</li>`).join("") : `<li style="color: var(--text-muted)">No use cases detected</li>`;
 
     // Pricing
     const priceList = document.getElementById("pricing-list");
     if (profileData.pricing_information.length === 0) {
-      priceList.innerHTML = `<div style="color: var(--text-muted); font-size: 0.9rem;">No public pricing statements found on crawled pages.</div>`;
+      priceList.innerHTML = `<div style="color: var(--text-muted); font-size: 0.9rem;">No verified public pricing found.</div>`;
     } else {
       priceList.innerHTML = profileData.pricing_information.map(pr => {
-        const ptxt = typeof pr.value === "object" ? (pr.value.price_text || `${pr.value.currency || '$'} ${pr.value.price}`) : pr.value;
+        let ptxt = "";
+        if (typeof pr.value === "object" && pr.value !== null) {
+          const v = pr.value;
+          const currSym = v.currency_symbol || (v.currency === 'USD' ? '$' : (v.currency || '$'));
+          const pType = v.pricing_type || (v.billing_basis === 'usage' ? 'usage_rate' : 'subscription_plan');
+          const planName = v.plan_name || v.associated_product || 'Plan';
+
+          if (pType === "free_tier" || v.billing_basis === "free" || (v.amount === 0 && !pType.includes("usage"))) {
+            ptxt = `<strong>${escapeHtml(planName)}</strong>: Free ($0) <span style="color: var(--text-muted); font-size: 0.85rem;">(free tier)</span>`;
+          } else if (pType === "custom" || v.billing_basis === "custom") {
+            ptxt = `<strong>${escapeHtml(planName)}</strong>: <span style="color: var(--accent-info); font-size: 0.85rem;">Custom / Contact Sales</span>`;
+          } else if (pType === "pay_as_you_go" || v.billing_basis === "pay_as_you_go") {
+            const feeStr = v.currency === 'PERCENT' || v.currency_symbol === '%' ? `${v.amount}% fee` : `${currSym}${v.price}`;
+            ptxt = `<strong>${escapeHtml(planName)}</strong>: Pay-as-you-go (${escapeHtml(feeStr)})`;
+          } else if (pType === "setup_fee") {
+            ptxt = `<strong>${escapeHtml(planName)}</strong>: ${currSym}${escapeHtml(String(v.price || v.amount))} <span style="color: var(--text-muted); font-size: 0.85rem;">(one-time setup fee)</span>`;
+          } else if (pType === "usage_allowance" || (v.unit && v.unit.includes("allowance"))) {
+            const numFormatted = Number(v.amount || v.price).toLocaleString();
+            const prefixCurr = v.currency ? currSym : "";
+            ptxt = `<strong>${escapeHtml(planName)}</strong>: ${prefixCurr}${escapeHtml(numFormatted)} <span style="color: var(--accent-info); font-size: 0.85rem;">(${escapeHtml(v.unit || 'allowance')})</span>`;
+          } else if (pType === "usage_rate" || v.billing_basis === "usage") {
+            const unitLabel = v.unit || 'unit';
+            ptxt = `<strong>${escapeHtml(planName)}</strong>: ${currSym}${escapeHtml(String(v.price || v.amount))} / ${escapeHtml(unitLabel)} <span style="color: var(--text-muted); font-size: 0.85rem;">(usage)</span>`;
+          } else if (pType === "unverified" || v.billing_basis === "unspecified") {
+            ptxt = `<strong>${escapeHtml(planName)}</strong>: <span style="color: var(--text-muted); font-size: 0.85rem;">Price unverified (${escapeHtml(v.price_text || 'contact provider')})</span>`;
+          } else if (v.formatted_display) {
+            ptxt = `<span>${escapeHtml(v.formatted_display)}</span>`;
+          } else {
+            const price = `${currSym}${v.price || v.amount}`;
+            const basis = v.billing_basis && v.billing_basis !== 'unspecified' ? ` <span style="color: var(--text-muted); font-size: 0.85rem;">(${escapeHtml(v.billing_basis)})</span>` : "";
+            ptxt = `<strong>${escapeHtml(planName)}</strong>: <span>${escapeHtml(price)}</span>${basis}`;
+          }
+          const features = v.features && v.features.length ? `<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">Features: ${escapeHtml(v.features.slice(0, 3).join(", "))}</div>` : "";
+          ptxt = `<div>${ptxt}${features}</div>`;
+        } else {
+          ptxt = `<span>${escapeHtml(String(pr.value))}</span>`;
+        }
         return `
           <div style="background: #0f172a; padding: 0.75rem 1rem; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
-            <span>💰 <strong>${escapeHtml(ptxt)}</strong></span>
+            <div>💰 ${ptxt}</div>
             <button class="btn btn-secondary btn-sm" onclick="openEvidenceModal('${pr.fact_id}')">Inspect Evidence</button>
           </div>
         `;
@@ -218,8 +918,9 @@ function renderFactsList() {
 
   let facts = profileData.facts;
   if (typeFilter) facts = facts.filter(f => f.fact_type === typeFilter);
-  if (statusFilter === "confirmed") facts = facts.filter(f => f.user_confirmed === true);
-  if (statusFilter === "unconfirmed") facts = facts.filter(f => f.user_confirmed === false);
+  if (statusFilter === "confirmed") facts = facts.filter(f => f.user_confirmed === true && !f.is_rejected);
+  if (statusFilter === "unconfirmed") facts = facts.filter(f => !f.user_confirmed && !f.is_rejected);
+  if (statusFilter === "rejected") facts = facts.filter(f => f.is_rejected === true);
 
   if (facts.length === 0) {
     container.innerHTML = `<div style="color: var(--text-muted); text-align: center; padding: 2rem;">No facts match the selected filter.</div>`;
@@ -228,13 +929,22 @@ function renderFactsList() {
 
   container.innerHTML = facts.map(f => {
     const valStr = typeof f.fact_value === "object" ? JSON.stringify(f.fact_value, null, 2) : String(f.fact_value);
-    const confirmedClass = f.user_confirmed ? "btn-success" : "btn-secondary";
-    const confirmedText = f.user_confirmed ? "✓ Confirmed" : "Confirm Fact";
+    let statusPill = "";
+    if (f.is_rejected) {
+      statusPill = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4);">✕ Rejected</span>`;
+    } else if (f.user_confirmed) {
+      statusPill = `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4);">✓ Confirmed</span>`;
+    } else {
+      statusPill = `<span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.4);">⏳ Pending Review</span>`;
+    }
 
     return `
       <div class="fact-item" id="fact-card-${f.id}">
         <div class="fact-content">
-          <div class="fact-type">${escapeHtml(f.fact_type)} &bull; ${Math.round(f.confidence * 100)}% Confidence</div>
+          <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.35rem;">
+            <div class="fact-type">${escapeHtml(f.fact_type)} &bull; ${Math.round(f.confidence * 100)}% Confidence</div>
+            ${statusPill}
+          </div>
           <div class="fact-val">${escapeHtml(valStr)}</div>
           <div class="fact-provenance">
             <strong>Source:</strong> ${f.source_url ? `<a href="${f.source_url}" target="_blank" style="color: var(--accent-primary);">${f.source_url}</a>` : 'Manual input'}
@@ -242,9 +952,9 @@ function renderFactsList() {
           </div>
         </div>
         <div class="fact-actions">
-          <button class="btn btn-sm ${confirmedClass}" onclick="toggleConfirmFact('${f.id}', ${!f.user_confirmed})">${confirmedText}</button>
+          ${!f.user_confirmed ? `<button class="btn btn-sm btn-success" onclick="toggleConfirmFact('${f.id}', true)">✓ Confirm</button>` : `<button class="btn btn-sm btn-secondary" onclick="toggleConfirmFact('${f.id}', false)">Unconfirm</button>`}
+          ${!f.is_rejected ? `<button class="btn btn-sm" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" onclick="toggleRejectFact('${f.id}', true)">✕ Reject</button>` : `<button class="btn btn-sm btn-secondary" onclick="toggleRejectFact('${f.id}', false)">↺ Restore</button>`}
           <button class="btn btn-secondary btn-sm" onclick="openEvidenceModal('${f.id}')">Inspect</button>
-          <button class="btn btn-sm" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5;" onclick="deleteFact('${f.id}')">✕</button>
         </div>
       </div>
     `;
@@ -256,7 +966,7 @@ async function toggleConfirmFact(factId, newStatus) {
     const res = await fetch(`/api/brands/${currentBrandId}/facts/${factId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_confirmed: newStatus })
+      body: JSON.stringify({ user_confirmed: newStatus, is_rejected: false })
     });
     if (res.ok) {
       await loadBrandProfile(currentBrandId);
@@ -267,8 +977,24 @@ async function toggleConfirmFact(factId, newStatus) {
   }
 }
 
+async function toggleRejectFact(factId, isRejected) {
+  try {
+    const res = await fetch(`/api/brands/${currentBrandId}/facts/${factId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_rejected: isRejected, user_confirmed: false })
+    });
+    if (res.ok) {
+      await loadBrandProfile(currentBrandId);
+      renderFactsList();
+    }
+  } catch (e) {
+    console.error("Toggle reject failed:", e);
+  }
+}
+
 async function deleteFact(factId) {
-  if (!confirm("Remove this fact from the brand profile?")) return;
+  if (!confirm("Permanently delete this fact from the brand profile?")) return;
   try {
     const res = await fetch(`/api/brands/${currentBrandId}/facts/${factId}`, {
       method: "DELETE"
@@ -340,20 +1066,49 @@ async function loadCrawledPages(pageNumber = 1) {
     if (!res.ok) return;
     const data = await res.json();
 
+    // Render crawl diagnostics if available
+    const diagBox = document.getElementById("crawl-budget-diagnostics");
+    if (profileData && (profileData.crawl_summary || (profileData.active_run && profileData.active_run.crawl_summary))) {
+      const summary = profileData.crawl_summary || profileData.active_run.crawl_summary;
+      diagBox.style.display = "block";
+      document.getElementById("crawl-budget-run-status").innerText = (summary.run_status || "COMPLETED").toUpperCase();
+      document.getElementById("crawl-budget-run-status").className = `badge badge-${(summary.run_status || 'completed').replace('_with_warnings', '')}`;
+
+      const metricsDiv = document.getElementById("crawl-budget-metrics");
+      metricsDiv.innerHTML = `
+        <div>Discovered: <strong>${summary.pages_discovered || 0}</strong></div>
+        <div>Attempted: <strong>${summary.pages_attempted || 0}</strong></div>
+        <div>Succeeded: <strong style="color: var(--accent-success);">${summary.pages_succeeded || 0}</strong></div>
+        <div>Skipped: <strong style="color: #fbbf24;">${summary.pages_skipped || 0}</strong></div>
+        <div>Failed: <strong style="color: var(--accent-danger);">${summary.pages_failed || 0}</strong></div>
+        <div>Bytes: <strong>${((summary.aggregate_bytes_processed || 0) / (1024 * 1024)).toFixed(2)} MB</strong></div>
+      `;
+
+      const skipsDiv = document.getElementById("crawl-skip-reasons");
+      const reasons = summary.skip_reasons || {};
+      const reasonEntries = Object.entries(reasons).filter(([k, v]) => v > 0);
+      if (reasonEntries.length > 0) {
+        skipsDiv.innerHTML = `<strong>Skip Reasons:</strong> ` + reasonEntries.map(([k, v]) => `${k.replace(/_/g, ' ')} (${v})`).join(" &bull; ");
+      } else {
+        skipsDiv.innerHTML = "";
+      }
+    }
+
     const tbody = document.getElementById("pages-table-body");
     if (!data.items || data.items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No crawled pages found.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No crawled pages found.</td></tr>`;
       return;
     }
 
     tbody.innerHTML = data.items.map(p => `
       <tr>
         <td><span class="badge ${p.http_status === 200 ? 'badge-completed' : 'badge-failed'}">HTTP ${p.http_status}</span></td>
-        <td style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+        <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
           <a href="${p.final_url}" target="_blank" style="color: var(--accent-primary);">${p.final_url}</a>
         </td>
         <td><span class="badge" style="background: #1e293b; color: #94a3b8;">${escapeHtml(p.page_type)}</span></td>
-        <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(p.title || 'Untitled')}</td>
+        <td><span class="badge" style="background: ${p.facts_count > 0 ? '#065f46' : '#334155'}; color: #e2e8f0;">${p.facts_count} facts</span></td>
+        <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(p.title || 'Untitled')}</td>
         <td>${p.used_js ? '⚡ Yes' : 'No'}</td>
         <td><button class="btn btn-secondary btn-sm" onclick="viewPageDetails('${p.id}')">View</button></td>
       </tr>
@@ -388,6 +1143,26 @@ async function viewPageDetails(pageId) {
     const h1s = (headings.h1 || []).map(h => `H1: ${escapeHtml(h)}`).join("<br>");
     const h2s = (headings.h2 || []).map(h => `H2: ${escapeHtml(h)}`).join("<br>");
     document.getElementById("page-detail-headings").innerHTML = (h1s || h2s) ? `${h1s}<br>${h2s}` : "No major headings detected";
+
+    const factsList = page.extracted_facts || [];
+    document.getElementById("page-detail-facts-count").innerText = factsList.length;
+    const factsContainer = document.getElementById("page-detail-facts-list");
+    if (factsList.length === 0) {
+      factsContainer.innerHTML = `<div style="color: var(--text-muted); font-size: 0.85rem;">This page contributed 0 facts to the brand profile.</div>`;
+    } else {
+      factsContainer.innerHTML = factsList.map(f => {
+        const valStr = typeof f.fact_value === 'object' ? JSON.stringify(f.fact_value) : String(f.fact_value);
+        return `
+          <div style="padding: 0.35rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <span class="badge" style="background: #334155; font-size: 0.75rem;">${escapeHtml(f.fact_type)}</span>
+              <span style="font-size: 0.85rem; margin-left: 0.5rem; color: #f8fafc;">${escapeHtml(valStr)}</span>
+            </div>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">${Math.round(f.confidence * 100)}%</span>
+          </div>
+        `;
+      }).join("");
+    }
 
     document.getElementById("page-detail-text").innerText = page.extracted_text || "(No readable text)";
     document.getElementById("page-detail-modal").style.display = "flex";
@@ -468,16 +1243,25 @@ async function handleGeneratePrompts() {
 
     // Display run status
     const badge = document.getElementById("prompt-run-status-badge");
-    badge.style.display = "inline-block";
-    badge.innerText = data.status.toUpperCase();
-    badge.className = `badge badge-${data.status === "completed" ? "completed" : "pending"}`;
+    if (badge) {
+      badge.style.display = "inline-block";
+      badge.innerText = (data.status || "COMPLETED").toUpperCase();
+      badge.className = `badge badge-${data.status === "completed" ? "completed" : "pending"}`;
+    }
 
-    document.getElementById("prompts-run-info").style.display = "block";
-    document.getElementById("info-run-id").innerText = data.id.substring(0, 8);
-    document.getElementById("info-provider").innerText = data.provider;
-    document.getElementById("info-profile-ver").innerText = `v${data.profile_version}`;
-    document.getElementById("info-count").innerText = data.prompts_generated;
-    document.getElementById("info-duration").innerText = data.duration_seconds || "0.0";
+    const runInfoBox = document.getElementById("prompts-run-info");
+    if (runInfoBox) runInfoBox.style.display = "block";
+    const runId = (data.run_id || data.id || "");
+    const runIdEl = document.getElementById("info-run-id");
+    if (runIdEl) runIdEl.innerText = runId ? runId.substring(0, 8) : "";
+    const provEl = document.getElementById("info-provider");
+    if (provEl) provEl.innerText = data.provider || "rule-based";
+    const profEl = document.getElementById("info-profile-ver");
+    if (profEl) profEl.innerText = `v${data.profile_version || 1}`;
+    const countEl = document.getElementById("info-count");
+    if (countEl) countEl.innerText = data.prompts_generated != null ? data.prompts_generated : 0;
+    const durEl = document.getElementById("info-duration");
+    if (durEl) durEl.innerText = data.duration_seconds || "0.0";
 
     // Reload coverage and prompts
     await loadPromptCoverage();
@@ -773,7 +1557,7 @@ async function openPromptEvidenceModal(promptId) {
    ENGINE 3: AI VISIBILITY EVALUATOR FUNCTIONS
    ========================================================== */
 
-async function loadVisibilityData() {
+async function loadVisibilityData(targetScanId = null) {
   if (!currentBrandId) {
     document.getElementById("eval-results-container").innerHTML = `
       <div style="text-align: center; color: var(--text-muted); padding: 2rem;">
@@ -793,9 +1577,16 @@ async function loadVisibilityData() {
     }
     const data = await res.json();
     const scans = data.items || [];
+    currentScansList = scans;
+
+    const historySelect = document.getElementById("eval_history_scan_select");
 
     if (scans.length === 0) {
       resetVisibilityScorecard();
+      if (historySelect) {
+        historySelect.style.display = "none";
+        historySelect.innerHTML = "";
+      }
       document.getElementById("eval-results-container").innerHTML = `
         <div style="text-align: center; color: var(--text-muted); padding: 2rem;">
           No visibility scans recorded yet. Select options above and run your first scan.
@@ -804,15 +1595,42 @@ async function loadVisibilityData() {
       return;
     }
 
-    // Latest scan
-    const latestScan = scans[0];
-    currentScanId = latestScan.id;
-    updateScanSummaryUI(latestScan);
+    // Determine target scan: either requested, or currentScanId if in list, or latest
+    let activeScan = scans[0];
+    if (targetScanId) {
+      const match = scans.find(s => s.id === targetScanId);
+      if (match) activeScan = match;
+    } else if (currentScanId) {
+      const match = scans.find(s => s.id === currentScanId);
+      if (match) activeScan = match;
+    }
 
-    if (latestScan.status === "pending" || latestScan.status === "running") {
-      startScanPolling(latestScan.id);
+    currentScanId = activeScan.id;
+
+    if (historySelect) {
+      historySelect.style.display = "inline-block";
+      historySelect.innerHTML = scans.map(s => {
+        const dt = new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const score = s.visibility_score != null ? `${Number(s.visibility_score).toFixed(1)}/100` : s.status;
+        return `<option value="${s.id}" ${s.id === activeScan.id ? 'selected' : ''}>Scan ${s.id.slice(0, 8)} (v${s.profile_version}, ${s.provider}, ${score}) - ${dt}</option>`;
+      }).join("");
+    }
+
+    updateScanSummaryUI(activeScan);
+
+    if (activeScan.status === "pending" || activeScan.status === "running") {
+      startScanPolling(activeScan.id);
     } else {
-      await loadScanResults(latestScan.id);
+      if (evalPollInterval) {
+        clearInterval(evalPollInterval);
+        evalPollInterval = null;
+      }
+      const btn = document.getElementById("start-eval-btn");
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = "🚀 Run AI Visibility Scan";
+      }
+      await loadScanResults(activeScan.id);
     }
   } catch (err) {
     console.error("Error loading visibility data:", err);
@@ -821,12 +1639,17 @@ async function loadVisibilityData() {
   }
 }
 
+async function handleSelectHistoricalScan(selectedScanId) {
+  if (!selectedScanId) return;
+  await loadVisibilityData(selectedScanId);
+}
+
 function resetVisibilityScorecard() {
   document.getElementById("eval-status-badge").innerText = "READY";
   document.getElementById("eval-status-badge").className = "badge badge-pending";
-  document.getElementById("stat-visibility-score").innerText = "0.0";
-  document.getElementById("stat-mention-rate").innerText = "0%";
-  document.getElementById("stat-recommendation-rate").innerText = "0%";
+  document.getElementById("stat-visibility-score").innerText = "N/A";
+  document.getElementById("stat-mention-rate").innerText = "N/A";
+  document.getElementById("stat-recommendation-rate").innerText = "N/A";
   document.getElementById("stat-avg-position").innerText = "N/A";
   document.getElementById("stat-eval-completed").innerText = "0 / 0";
   document.getElementById("eval-run-info").style.display = "none";
@@ -883,6 +1706,12 @@ async function handleStartVisibilityScan() {
 function startScanPolling(scanId) {
   if (evalPollInterval) clearInterval(evalPollInterval);
 
+  const btn = document.getElementById("start-eval-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = "⚡ Evaluating Prompts...";
+  }
+
   const checkStatus = async () => {
     try {
       const res = await fetch(`/api/brands/${currentBrandId}/visibility/scans/${scanId}`);
@@ -895,9 +1724,10 @@ function startScanPolling(scanId) {
         clearInterval(evalPollInterval);
         evalPollInterval = null;
 
-        const btn = document.getElementById("start-eval-btn");
-        btn.disabled = false;
-        btn.innerText = "🚀 Run AI Visibility Scan";
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "🚀 Run AI Visibility Scan";
+        }
 
         if (scan.status === "failed") {
           const errorBanner = document.getElementById("eval-error-banner");
@@ -905,6 +1735,23 @@ function startScanPolling(scanId) {
           errorBanner.style.display = "block";
         } else {
           await loadScanResults(scan.id);
+        }
+
+        // Refresh scan history selector with updated score & status
+        const historyRes = await fetch(`/api/brands/${currentBrandId}/visibility/scans`);
+        if (historyRes.ok) {
+          const histData = await historyRes.json();
+          const scans = histData.items || [];
+          currentScansList = scans;
+          const historySelect = document.getElementById("eval_history_scan_select");
+          if (historySelect && scans.length > 0) {
+            historySelect.style.display = "inline-block";
+            historySelect.innerHTML = scans.map(s => {
+              const dt = new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              const score = s.visibility_score != null ? `${Number(s.visibility_score).toFixed(1)}/100` : s.status;
+              return `<option value="${s.id}" ${s.id === scan.id ? 'selected' : ''}>Scan ${s.id.slice(0, 8)} (v${s.profile_version}, ${s.provider}, ${score}) - ${dt}</option>`;
+            }).join("");
+          }
         }
       }
     } catch (e) {
@@ -930,9 +1777,9 @@ function updateScanSummaryUI(scan) {
     mockBanner.style.display = (scan.provider === "mock") ? "block" : "none";
   }
 
-  document.getElementById("stat-visibility-score").innerText = (scan.visibility_score != null ? scan.visibility_score : 0).toFixed(1);
-  document.getElementById("stat-mention-rate").innerText = `${((scan.mention_rate != null ? scan.mention_rate : 0) * 100).toFixed(0)}%`;
-  document.getElementById("stat-recommendation-rate").innerText = `${((scan.recommendation_rate != null ? scan.recommendation_rate : 0) * 100).toFixed(0)}%`;
+  document.getElementById("stat-visibility-score").innerText = scan.visibility_score != null ? Number(scan.visibility_score).toFixed(1) : "N/A";
+  document.getElementById("stat-mention-rate").innerText = scan.mention_rate != null ? `${(Number(scan.mention_rate) * 100).toFixed(0)}%` : "N/A";
+  document.getElementById("stat-recommendation-rate").innerText = scan.recommendation_rate != null ? `${(Number(scan.recommendation_rate) * 100).toFixed(0)}%` : "N/A";
   
   const avgPos = scan.average_position;
   document.getElementById("stat-avg-position").innerText = avgPos ? `#${avgPos.toFixed(1)}` : "N/A";
@@ -944,6 +1791,10 @@ function updateScanSummaryUI(scan) {
   const infoBox = document.getElementById("eval-run-info");
   infoBox.style.display = "block";
   document.getElementById("eval-info-id").innerText = (scan.id || "").slice(0, 8);
+  const profVerEl = document.getElementById("eval-info-profile-version");
+  if (profVerEl) {
+    profVerEl.innerText = `v${scan.profile_version || 1}`;
+  }
   document.getElementById("eval-info-provider").innerText = (scan.provider || "").toUpperCase();
   document.getElementById("eval-info-model").innerText = scan.model_name || scan.model_identifier || "mock";
 
@@ -1039,16 +1890,22 @@ function filterVisibilityResults() {
          </div>`
       : "";
 
-    const citations = r.citations || [];
-    const citHtml = citations.length > 0
+    const providerCitations = r.provider_citations || [];
+    const responseCitations = r.response_citations || (
+      providerCitations.length === 0 ? (r.citations || []) : []
+    );
+    const renderCitationGroup = (label, citations) => citations.length > 0
       ? `<div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
-           <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Sources / Citations:</span>
+           <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">${label}:</span>
            ${citations.map(c => {
              const url = typeof c === 'string' ? c : (c.url || '#');
              const title = typeof c === 'string' ? c : (c.title || c.url);
-             return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="font-size: 0.75rem; color: var(--accent-primary); background: rgba(59, 130, 246, 0.1); padding: 0.15rem 0.5rem; border-radius: 4px; text-decoration: none; border: 1px solid rgba(59, 130, 246, 0.25);">🔗 ${escapeHtml(title)}</a>`;
+             return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="font-size: 0.75rem; color: var(--accent-primary); background: rgba(59, 130, 246, 0.1); padding: 0.15rem 0.5rem; border-radius: 4px; text-decoration: none; border: 1px solid rgba(59, 130, 246, 0.25);">${escapeHtml(title)}</a>`;
            }).join("")}
          </div>`
+      : "";
+    const citHtml = providerCitations.length > 0 || responseCitations.length > 0
+      ? `${renderCitationGroup("Provider grounding", providerCitations)}${renderCitationGroup("URLs in response", responseCitations)}`
       : "";
 
     const contextHtml = r.mention_context
@@ -1162,8 +2019,38 @@ async function handleSelectBrand(brandId) {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  initBrandSelector();
-});
+async function initApp() {
+  const authed = await checkAuthStatus();
+  if (authed) {
+    await initBrandSelector();
 
+    // Check for persisted active experiment from URL query or localStorage
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramScanId = urlParams.get("scan_id");
+    let savedExp = null;
+    try {
+      savedExp = JSON.parse(localStorage.getItem("auralyt_active_experiment") || "null");
+    } catch (e) {}
+
+    const activeScanId = paramScanId || savedExp?.scan_id;
+    const activeExpBrandId = urlParams.get("brand_id") || savedExp?.brand_id || currentBrandId;
+
+    if (activeExpBrandId && activeScanId) {
+      currentBrandId = activeExpBrandId;
+      currentScanId = activeScanId;
+      switchTab("experiment");
+      await loadAndRenderExperimentResults(activeExpBrandId, activeScanId);
+    } else {
+      switchTab("experiment");
+    }
+  } else {
+    showAuthModal("login");
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initApp);
+} else {
+  initApp();
+}
 

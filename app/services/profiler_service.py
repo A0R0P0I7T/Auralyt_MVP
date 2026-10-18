@@ -177,7 +177,14 @@ class ProfilerService:
                 )
                 new_facts = synthesizer.synthesize_facts(page_models)
 
+                # If brand industry was not provided by user, populate from inferred category fact (DEF-E1-01)
+                if not brand.industry:
+                    inferred_cat = next((f.fact_value for f in new_facts if f.fact_type in ("industry", "category")), None)
+                    if inferred_cat:
+                        brand.industry = inferred_cat if isinstance(inferred_cat, str) else str(inferred_cat.get("name", inferred_cat))
+
                 # A warning/failed-page run is not a complete snapshot. Merge its
+
                 # observations but never retire information established by a clean run.
                 complete_snapshot = not crawler.warnings and crawler.pages_failed == 0
                 existing_stmt = select(BrandFact).where(BrandFact.brand_id == brand.id)

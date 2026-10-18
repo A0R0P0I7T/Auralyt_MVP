@@ -13,83 +13,102 @@ class CoveragePlanner:
     def create_plan(
         profile: NormalizedBrandProfile,
         requested_count: int = 20,
-        allowed_categories: Optional[List[str]] = None
+        allowed_categories: Optional[List[str]] = None,
+        surplus_ratio: float = 1.0
     ) -> CoveragePlan:
+        # Determine organic category grounded strictly in profile evidence
+        category = profile.get_primary_category()
+        if not category:
+            raise ValueError(
+                "Cannot create coverage plan: brand profile has insufficient evidence (missing industry, category, products, or use cases). "
+                "Please complete website profiling first."
+            )
+
+        archetype = profile.get_domain_archetype()
+        clean_products = profile.get_clean_products()
+        clean_subcategories = profile.get_clean_subcategories()
+        clean_audiences = profile.get_clean_audiences()
+        clean_use_cases = profile.get_clean_use_cases()
+        clean_diffs = profile.get_clean_differentiators()
+        article_topics = profile.get_article_topics()
+
         # Determine active dimensions based on real grounded data
         active_dimensions: List[str] = []
         candidate_categories: List[Dict[str, Any]] = []
 
-        # 1. Discovery (Always applicable if industry/business name exists)
+        # 1. Discovery (Broad industry/category awareness)
+        discovery_values = clean_subcategories if clean_subcategories else [category]
         candidate_categories.append({
             "category": "discovery",
             "intent": "informational",
             "buying_stage": "awareness",
-            "weight": 3,
+            "weight": 4,
             "dimension": "industry",
-            "values": [profile.industry] if profile.industry else ["solutions in this domain"]
+            "values": discovery_values
         })
         active_dimensions.append("discovery")
 
-        # 2. Recommendations
+        # 2. Recommendations (Commercial consideration queries)
         candidate_categories.append({
             "category": "recommendations",
             "intent": "commercial",
             "buying_stage": "consideration",
-            "weight": 3,
+            "weight": 4,
             "dimension": "category",
-            "values": [profile.industry or profile.business_name]
+            "values": clean_subcategories or [category]
         })
         active_dimensions.append("recommendations")
 
-        # 3. Product Evaluation (Only if products/services exist)
-        if profile.products_and_services:
+        # 3. Product Evaluation (Evaluation criteria and features - only if products exist)
+        if clean_products or profile.products_and_services:
+            eval_values = clean_products or profile.products_and_services
             candidate_categories.append({
                 "category": "product_evaluation",
                 "intent": "commercial",
                 "buying_stage": "consideration",
                 "weight": 4,
                 "dimension": "product",
-                "values": profile.products_and_services
+                "values": eval_values
             })
             active_dimensions.append("product_evaluation")
 
-        # 4. Comparisons (Only if brand has products or differentiators)
-        if profile.products_and_services or profile.differentiators:
-            candidate_categories.append({
-                "category": "comparisons",
-                "intent": "comparative",
-                "buying_stage": "consideration",
-                "weight": 3,
-                "dimension": "competitors",
-                "values": profile.products_and_services or [profile.business_name]
-            })
-            active_dimensions.append("comparisons")
+        # 4. Comparisons (Head-to-head or category alternatives)
+        comp_values = clean_subcategories or clean_products or [category]
+        candidate_categories.append({
+            "category": "comparisons",
+            "intent": "comparative",
+            "buying_stage": "consideration",
+            "weight": 4,
+            "dimension": "competitors",
+            "values": comp_values
+        })
+        active_dimensions.append("comparisons")
 
-        # 5. Audience-Specific Needs (Only if documented target audiences exist)
-        if profile.target_audiences:
+        # 5. Audience-Specific Needs (Only if audience facts exist)
+        if clean_audiences:
             candidate_categories.append({
                 "category": "audience_specific",
                 "intent": "commercial",
                 "buying_stage": "awareness",
                 "weight": 3,
                 "dimension": "audience",
-                "values": profile.target_audiences
+                "values": clean_audiences
             })
             active_dimensions.append("audience_specific")
 
-        # 6. Use Cases & Problem Discovery (Only if use cases or FAQs exist)
-        if profile.use_cases:
-            candidate_categories.append({
-                "category": "use_cases",
-                "intent": "informational",
-                "buying_stage": "consideration",
-                "weight": 3,
-                "dimension": "use_case",
-                "values": profile.use_cases
-            })
-            active_dimensions.append("use_cases")
+        # 6. Use Cases & Problem Discovery (Prioritize article/guide topics if available)
+        uc_values = (article_topics + clean_use_cases) if article_topics else (clean_use_cases or [f"evaluating {category}"])
+        candidate_categories.append({
+            "category": "use_cases",
+            "intent": "informational",
+            "buying_stage": "consideration",
+            "weight": 4,
+            "dimension": "use_case",
+            "values": uc_values
+        })
+        active_dimensions.append("use_cases")
 
-        # 7. Pricing and Value (Only if documented pricing models exist)
+        # 7. Pricing and Value (Only if pricing models exist)
         if profile.pricing_models:
             candidate_categories.append({
                 "category": "pricing_value",
@@ -102,16 +121,16 @@ class CoveragePlanner:
             active_dimensions.append("pricing_value")
 
         # 8. Brand Research & Differentiators
-        if profile.differentiators or profile.tagline_or_description:
-            candidate_categories.append({
-                "category": "brand_research",
-                "intent": "informational",
-                "buying_stage": "decision",
-                "weight": 3,
-                "dimension": "differentiator",
-                "values": profile.differentiators or [profile.business_name]
-            })
-            active_dimensions.append("brand_research")
+        diff_values = clean_diffs or article_topics or clean_subcategories or [category]
+        candidate_categories.append({
+            "category": "brand_research",
+            "intent": "informational",
+            "buying_stage": "decision",
+            "weight": 3,
+            "dimension": "differentiator",
+            "values": diff_values
+        })
+        active_dimensions.append("brand_research")
 
         # Filter categories if caller specified allowed_categories
         if allowed_categories:
@@ -119,32 +138,39 @@ class CoveragePlanner:
             candidate_categories = [c for c in candidate_categories if c["category"] in allowed_set]
 
         if not candidate_categories:
-            # Fallback minimal slot
             candidate_categories = [{
                 "category": "discovery",
                 "intent": "informational",
                 "buying_stage": "awareness",
                 "weight": 1,
-                "dimension": "brand",
-                "values": [profile.business_name]
+                "dimension": "industry",
+                "values": [category]
             }]
 
-        # Generate slots based on weights and quotas
+        # Surplus planning: plan candidate slots to meet or exceed requested_count
+        slots_target = max(requested_count, round(requested_count * surplus_ratio))
+
         slots: List[PlannedPromptSlot] = []
         total_weight = sum(c["weight"] for c in candidate_categories)
         cat_counts: Dict[str, int] = {}
 
-        # Round 1: Proportional distribution
         for cat_info in candidate_categories:
-            quota = max(1, round((cat_info["weight"] / total_weight) * requested_count))
+            quota = max(1, round((cat_info["weight"] / total_weight) * slots_target))
             cat_counts[cat_info["category"]] = quota
 
-        # Adjust total to exactly requested_count
+        # Adjust total to exactly slots_target
         current_total = sum(cat_counts.values())
-        diff = requested_count - current_total
-        if diff != 0:
+        while current_total > slots_target:
+            max_cat = max(cat_counts, key=lambda k: cat_counts[k])
+            if cat_counts[max_cat] > 1:
+                cat_counts[max_cat] -= 1
+                current_total -= 1
+            else:
+                break
+        while current_total < slots_target:
             primary_cat = candidate_categories[0]["category"]
-            cat_counts[primary_cat] = max(1, cat_counts[primary_cat] + diff)
+            cat_counts[primary_cat] += 1
+            current_total += 1
 
         # Assemble individual slots
         for cat_info in candidate_categories:
@@ -153,43 +179,24 @@ class CoveragePlanner:
             values_list = cat_info["values"]
 
             for i in range(quota):
-                # Find matching fact IDs for provenance
+                val = values_list[i % len(values_list)] if values_list else category
                 matching_fact_ids = []
                 evidence_text = None
                 relevant_types = {
                     "product": {"product_service", "product_feature"},
+                    "competitors": {"product_service", "differentiator"},
                     "audience": {"target_audience"},
                     "use_case": {"use_case"},
                     "pricing": {"pricing"},
-                    "differentiator": {"differentiator", "company_description"},
-                    "industry": {"industry"},
-                    "category": {"industry", "business_name"},
-                    "brand": {"business_name", "company_description"},
+                    "differentiator": {"differentiator", "company_description", "business_overview"},
+                    "industry": {"industry", "business_overview", "company_description"},
+                    "category": {"industry", "business_overview", "company_description"},
+                    "brand": {"industry", "business_overview", "company_description"},
                 }.get(cat_info["dimension"], set())
-                grounded_values = set()
-                if relevant_types:
-                    for fact in profile.facts:
-                        if fact.fact_type not in relevant_types:
-                            continue
-                        if isinstance(fact.fact_value, dict):
-                            fact_value = (
-                                fact.fact_value.get("name")
-                                or fact.fact_value.get("plan_name")
-                                or fact.fact_value.get("model")
-                                or fact.fact_value.get("segment")
-                                or fact.fact_value.get("claim")
-                                or fact.fact_value.get("title")
-                            )
-                        else:
-                            fact_value = fact.fact_value
-                        grounded_values.add(str(fact_value).lower())
-                if grounded_values:
-                    values_list = [
-                        value for value in values_list
-                        if str(value).lower() in grounded_values
-                    ] or values_list
-                val = values_list[i % len(values_list)] if values_list else None
+
                 for f in profile.facts:
+                    if f.fact_type not in relevant_types:
+                        continue
                     if isinstance(f.fact_value, dict):
                         f_val = (
                             f.fact_value.get("name")
@@ -198,14 +205,24 @@ class CoveragePlanner:
                             or f.fact_value.get("segment")
                             or f.fact_value.get("claim")
                             or f.fact_value.get("title")
+                            or f.fact_value.get("description")
                         )
                     else:
                         f_val = f.fact_value
                     f_val_str = str(f_val).lower()
-                    if f.fact_type in relevant_types and val and str(val).lower() in f_val_str:
-                        if f.id:
+                    if (val and str(val).lower() in f_val_str) or f.fact_type in ("industry", "business_overview", "company_description"):
+                        if f.id and f.id not in matching_fact_ids:
                             matching_fact_ids.append(f.id)
                         evidence_text = evidence_text or f.evidence_snippet
+
+                if not matching_fact_ids:
+                    for f in profile.facts:
+                        if f.fact_type in relevant_types and f.id:
+                            matching_fact_ids.append(f.id)
+                            evidence_text = evidence_text or f.evidence_snippet
+                            break
+
+                is_article = bool(article_topics and val in article_topics)
 
                 slot = PlannedPromptSlot(
                     category=cat_name,
@@ -214,14 +231,13 @@ class CoveragePlanner:
                     target_dimension=cat_info["dimension"],
                     dimension_value=val,
                     source_fact_ids=matching_fact_ids,
-                    evidence_snippet=evidence_text
+                    evidence_snippet=evidence_text,
+                    archetype=archetype,
+                    is_article_inspired=is_article
                 )
                 slots.append(slot)
 
-        # Re-verify total count
-        if len(slots) > requested_count:
-            slots = slots[:requested_count]
-
+        slots = slots[:slots_target]
         distribution: Dict[str, int] = {}
         for s in slots:
             distribution[s.category] = distribution.get(s.category, 0) + 1
@@ -231,4 +247,18 @@ class CoveragePlanner:
             slots=slots,
             category_distribution=distribution,
             active_dimensions=active_dimensions
+        )
+
+    @staticmethod
+    def create_replenishment_plan(
+        profile: NormalizedBrandProfile,
+        needed_count: int,
+        allowed_categories: Optional[List[str]] = None
+    ) -> CoveragePlan:
+        """Generates a targeted replenishment plan to fill missing slots."""
+        return CoveragePlanner.create_plan(
+            profile=profile,
+            requested_count=needed_count,
+            allowed_categories=allowed_categories,
+            surplus_ratio=2.0
         )
