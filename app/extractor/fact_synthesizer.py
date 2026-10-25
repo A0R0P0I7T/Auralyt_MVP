@@ -552,7 +552,12 @@ class FactSynthesizer:
             (("issue tracking", "project management", "sprint planning", "bug tracking"), "Project Management & Issue Tracking"),
             (("developer tools", "ci/cd", "deployment platform", "frontend cloud", "hosting platform"), "Developer Tools & Cloud Infrastructure"),
             (("payments platform", "financial infrastructure", "payment processing", "billing platform"), "Fintech & Payments"),
-            (("ai video", "video generation", "generative ai", "large language model", "machine learning platform", "computer vision"), "Artificial Intelligence & Machine Learning"),
+            ((
+                "artificial intelligence", "generative ai", "large language model", "large language models", "llm",
+                "machine learning platform", "machine learning", "computer vision", "conversational ai",
+                "ai assistant", "ai chat", "ai models", "ai model", "ai video", "video generation",
+                "code with ai", "work with ai", "chat with ai", "powered by ai"
+            ), "Artificial Intelligence & Machine Learning"),
             (("e-commerce", "online store", "shopping cart", "retail platform", "merchandise"), "E-Commerce & Retail"),
             (("cybersecurity", "identity management", "access management", "threat detection", "endpoint security"), "Cybersecurity & Identity"),
             (("customer support", "crm", "help desk", "customer service platform", "ticketing system"), "Customer Support & CRM"),
@@ -565,6 +570,28 @@ class FactSynthesizer:
 
         for text_source, method, src_page, conf in sources_to_check:
             text_lower = text_source.lower()
+            if re.search(r"\b(?:is|with|using|built with|powered by)\s+ai\b", text_lower):
+                sentences = re.split(r"(?<=[.!?])\s+", text_source)
+                verbatim = next((s.strip() for s in sentences if re.search(r"\bai\b", s, re.I)), text_source[:200])
+                return BrandFact(
+                    brand_id=self.brand_id,
+                    profile_version=self.profile_version,
+                    fact_type="industry",
+                    fact_value="Artificial Intelligence & Machine Learning",
+                    source_page_id=src_page.id if src_page else None,
+                    source_url=src_page.final_url if src_page else homepage.final_url,
+                    evidence_snippet=verbatim,
+                    supporting_evidence=[{
+                        "source_url": src_page.final_url if src_page else homepage.final_url,
+                        "snippet": verbatim,
+                        "source_type": method,
+                        "provenance_type": "verbatim_text",
+                        "heuristic_confidence": 0.85
+                    }],
+                    extraction_method=method,
+                    confidence=0.85,
+                    user_confirmed=False
+                )
             for keywords, tax_name in CATEGORY_TAXONOMY:
                 for kw in keywords:
                     if kw in text_lower:
@@ -1071,6 +1098,98 @@ class FactSynthesizer:
                                     user_confirmed=False
                                 ))
                         break
+
+            if p.meta_description:
+                meta_clean = p.meta_description.strip()
+                use_intent_patterns = [
+                    re.compile(r"\b(?:use|uses|using)\s+[A-Za-z0-9_\- ]+?\s+to\s+([^.!?—–;]+)", re.I),
+                    re.compile(r"\b(?:built|designed|developed|created)\s+to\s+([^.!?—–;]+)", re.I),
+                    re.compile(r"\b(?:helps?|allowing|enabling|allows|enables)\s+(?:users|teams|businesses|people|you|customers)?\s*to\s+([^.!?—–;]+)", re.I),
+                ]
+                for u_pat in use_intent_patterns:
+                    m = u_pat.search(meta_clean)
+                    if m:
+                        clause = m.group(1).strip()
+                        candidates = [c.strip() for c in re.split(r",|\band\b|;", clause) if c.strip()]
+                        if is_valid_use_case(clause) and clause.lower() not in seen_use_cases:
+                            seen_use_cases.add(clause.lower())
+                            facts.append(BrandFact(
+                                brand_id=self.brand_id,
+                                profile_version=self.profile_version,
+                                fact_type="use_case",
+                                fact_value=clause,
+                                source_page_id=p.id,
+                                source_url=p.final_url,
+                                evidence_snippet=meta_clean[:200],
+                                supporting_evidence=[{
+                                    "source_url": p.final_url,
+                                    "snippet": meta_clean[:200],
+                                    "source_type": "meta_description",
+                                    "provenance_type": "meta_description",
+                                    "heuristic_confidence": 0.85
+                                }],
+                                extraction_method="meta_description",
+                                confidence=0.85,
+                                user_confirmed=False
+                            ))
+                        for cand in candidates:
+                            cand_clean = cand.strip(" \t\r\n,;:-–—\"'“”()[]")
+                            cand_lower = cand_clean.lower()
+                            if is_valid_use_case(cand_clean) and cand_lower not in seen_use_cases:
+                                seen_use_cases.add(cand_lower)
+                                facts.append(BrandFact(
+                                    brand_id=self.brand_id,
+                                    profile_version=self.profile_version,
+                                    fact_type="use_case",
+                                    fact_value=cand_clean,
+                                    source_page_id=p.id,
+                                    source_url=p.final_url,
+                                    evidence_snippet=meta_clean[:200],
+                                    supporting_evidence=[{
+                                        "source_url": p.final_url,
+                                        "snippet": meta_clean[:200],
+                                        "source_type": "meta_description",
+                                        "provenance_type": "meta_description",
+                                        "heuristic_confidence": 0.85
+                                    }],
+                                    extraction_method="meta_description",
+                                    confidence=0.85,
+                                    user_confirmed=False
+                                ))
+
+                aud_intent_patterns = [
+                    re.compile(r"\b(?:built|designed|made)\s+for\s+([^.!?—–;]+)", re.I),
+                    re.compile(r"\b(?:empowers?|helps?)\s+([A-Za-z0-9_\- ]+?)\s+to\b", re.I),
+                ]
+                for a_pat in aud_intent_patterns:
+                    m = a_pat.search(meta_clean)
+                    if m:
+                        clause = m.group(1).strip()
+                        candidates = [c.strip() for c in re.split(r",|\band\b|;", clause) if c.strip()]
+                        for cand in candidates:
+                            cand_clean = cand.strip(" \t\r\n,;:-–—\"'“”()[]")
+                            cand_lower = cand_clean.lower()
+                            if is_valid_target_audience(cand_clean) and cand_lower not in seen_audience:
+                                seen_audience.add(cand_lower)
+                                facts.append(BrandFact(
+                                    brand_id=self.brand_id,
+                                    profile_version=self.profile_version,
+                                    fact_type="target_audience",
+                                    fact_value=cand_clean,
+                                    source_page_id=p.id,
+                                    source_url=p.final_url,
+                                    evidence_snippet=meta_clean[:200],
+                                    supporting_evidence=[{
+                                        "source_url": p.final_url,
+                                        "snippet": meta_clean[:200],
+                                        "source_type": "meta_description",
+                                        "provenance_type": "meta_description",
+                                        "heuristic_confidence": 0.85
+                                    }],
+                                    extraction_method="meta_description",
+                                    confidence=0.85,
+                                    user_confirmed=False
+                                ))
 
     def _extract_educational_and_buying_guide_topics(self, pages: List[CrawledPage], facts: List[BrandFact], brand_name: str = "") -> None:
         """

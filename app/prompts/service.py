@@ -11,6 +11,8 @@ from app.db.session import async_session_factory
 from app.db.models import Brand, PromptRun, PromptCandidate, utc_now
 from app.services.profiler_service import ProfilerService
 from app.prompts.normalizer import ProfileNormalizer
+from app.prompts.classifier import CategoryClassifier, CLASSIFICATION_VERSION
+from app.prompts.templates import TEMPLATE_SYSTEM_VERSION
 from app.prompts.planner import CoveragePlanner
 from app.prompts.generator import get_prompt_generator
 from app.prompts.validator import PromptValidator
@@ -18,6 +20,36 @@ from app.prompts.scorer import PromptScorer, normalize_prompt_text
 from app.prompts.models import GeneratedPromptCandidate
 
 logger = logging.getLogger(__name__)
+
+
+def select_balanced_candidates(
+    candidates: List[GeneratedPromptCandidate], target_count: int
+) -> List[GeneratedPromptCandidate]:
+    """
+    Selects a balanced, diverse set of prompt candidates across categories
+    rather than truncating sequentially and starving later categories (DEF-E2-DIV).
+    """
+    if len(candidates) <= target_count:
+        return candidates
+
+    by_category: Dict[str, List[GeneratedPromptCandidate]] = {}
+    for c in candidates:
+        by_category.setdefault(c.category, []).append(c)
+
+    # Sort candidates within each category by quality_score descending
+    for cat in by_category:
+        by_category[cat].sort(key=lambda x: getattr(x, "quality_score", 0.0), reverse=True)
+
+    selected: List[GeneratedPromptCandidate] = []
+    categories = list(by_category.keys())
+    cat_idx = 0
+    while len(selected) < target_count and any(by_category.values()):
+        cat = categories[cat_idx % len(categories)]
+        if by_category[cat]:
+            selected.append(by_category[cat].pop(0))
+        cat_idx += 1
+
+    return selected
 
 
 class PromptIntelligenceService:
@@ -69,11 +101,14 @@ class PromptIntelligenceService:
                     "Please complete website profiling first."
                 )
 
+            # 3.5 Stage A.2: Category Classification
+            classification = CategoryClassifier.classify(normalized_profile)
+
             # The mutable brand counter may point at a pending/failed refresh.
             # Generate only from the completed snapshot returned by Engine 1.
             current_version = normalized_profile.profile_version
 
-            CURRENT_STRATEGY_VERSION = "v2_relevance_freshness"
+            CURRENT_STRATEGY_VERSION = "v3_category_grounded"
 
             # 4. Check for cached generation if not force_regenerate
             if not force_regenerate:
@@ -86,10 +121,21 @@ class PromptIntelligenceService:
                 latest_run = res.scalars().first()
 
                 if latest_run:
-                    strat_ver = (latest_run.config_metadata or {}).get("strategy_version")
-                    if strat_ver == CURRENT_STRATEGY_VERSION:
+                    meta = latest_run.config_metadata or {}
+                    strat_ver = meta.get("strategy_version")
+                    class_ver = meta.get("classification_version")
+                    templ_ver = meta.get("template_version")
+                    req_count = meta.get("requested_count")
+
+                    if (
+                        strat_ver == CURRENT_STRATEGY_VERSION
+                        and class_ver == CLASSIFICATION_VERSION
+                        and templ_ver == TEMPLATE_SYSTEM_VERSION
+                        and req_count == prompt_count
+                    ):
                         prompts_stmt = select(PromptCandidate).where(
                             PromptCandidate.prompt_run_id == latest_run.id,
+                            PromptCandidate.is_approved.is_(True),
                             PromptCandidate.is_archived.is_(False)
                         ).order_by(desc(PromptCandidate.quality_score))
                         p_res = await db.execute(prompts_stmt)
@@ -131,7 +177,13 @@ class PromptIntelligenceService:
                     "force_regenerate": force_regenerate,
                     "generation_mode": generation_mode,
                     "strategy_version": CURRENT_STRATEGY_VERSION,
-                    "archetype": normalized_profile.get_domain_archetype(),
+                    "classification_version": CLASSIFICATION_VERSION,
+                    "template_version": TEMPLATE_SYSTEM_VERSION,
+                    "primary_industry": classification.primary_industry,
+                    "primary_category": classification.primary_category,
+                    "business_model": classification.business_model,
+                    "classification_confidence": classification.confidence,
+                    "archetype": classification.domain_archetype,
                 }
             )
             db.add(run)
@@ -160,8 +212,11 @@ class PromptIntelligenceService:
                 for cand in raw_candidates:
                     is_valid, reason = PromptValidator.validate(cand, normalized_profile, reject_brand_mentions=True)
                     if is_valid:
+                        cand.is_approved = True
                         validated_candidates.append(cand)
                     else:
+                        cand.is_approved = False
+                        cand.rejection_reason = reason
                         rejection_log.append({"prompt": cand.text, "reason": reason})
                         logger.debug(f"Candidate rejected by validator: '{cand.text}' -> {reason}")
 
@@ -184,8 +239,11 @@ class PromptIntelligenceService:
                     for cand in replenish_cands:
                         is_valid, reason = PromptValidator.validate(cand, normalized_profile, reject_brand_mentions=True)
                         if is_valid:
+                            cand.is_approved = True
                             validated_candidates.append(cand)
                         else:
+                            cand.is_approved = False
+                            cand.rejection_reason = reason
                             rejection_log.append({"prompt": cand.text, "reason": reason})
 
                     unique_candidates = PromptScorer.deduplicate(validated_candidates)
@@ -197,8 +255,8 @@ class PromptIntelligenceService:
                     scored_candidates.append(scored)
                     accepted_so_far.append(scored)
 
-                # Limit to prompt_count requested
-                final_candidates = scored_candidates[:prompt_count]
+                # Select balanced candidates across diverse categories
+                final_candidates = select_balanced_candidates(scored_candidates, prompt_count)
 
                 # 10. Stage F: Persistence
                 # Deduplicate strictly within this run's final candidates without dropping previous run texts
@@ -223,9 +281,16 @@ class PromptIntelligenceService:
                         language=fc.language,
                         provenance_fact_ids=fc.provenance_fact_ids,
                         grounding_evidence=fc.grounding_evidence,
-                        scores=fc.scores,
+                        scores={
+                            **(fc.scores or {}),
+                            "validation_decision": "approved" if fc.is_approved else "rejected",
+                            "rejection_reason": fc.rejection_reason,
+                            "template_version": fc.template_version or TEMPLATE_SYSTEM_VERSION,
+                            "classification_version": CLASSIFICATION_VERSION,
+                            "subcategory": fc.subcategory,
+                        },
                         quality_score=fc.quality_score,
-                        is_approved=True,
+                        is_approved=fc.is_approved,
                         is_archived=False,
                         user_edited=False,
                         edit_history=[]
@@ -247,6 +312,8 @@ class PromptIntelligenceService:
                     "persisted_count": len(persisted_models),
                     "replenishment_passes": replenishment_passes,
                     "rejections_count": len(rejection_log),
+                    "rejections": rejection_log[:10],
+                    "shortfall": max(0, prompt_count - len(persisted_models)),
                 }
                 run.config_metadata = meta
 

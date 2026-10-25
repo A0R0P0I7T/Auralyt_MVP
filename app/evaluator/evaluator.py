@@ -13,6 +13,8 @@ from typing import Optional, List, Dict, Any, Tuple
 from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
+from app.core.brand_identity import registrable_domain, registrable_label
+
 
 class EvaluationResult(BaseModel):
     """Structured evaluation of a single AI model response."""
@@ -167,11 +169,14 @@ class VisibilityResponseEvaluator:
             return res
         parsed_domain = urlparse(brand_domain if "://" in brand_domain else f"https://{brand_domain}")
         domain_clean = (parsed_domain.hostname or brand_domain).replace("www.", "").strip().lower()
-        domain_host = domain_clean.split(".")[0]
+        root_domain = registrable_domain(domain_clean)
+        domain_host = registrable_label(domain_clean)
+        # Names shorter than 3 characters (e.g. "In") are ordinary words; only the domain identifies the brand.
+        name_usable = len(name_clean) >= 3
 
         # Regex for word-boundary brand mention
-        escaped_name = re.escape(name_clean)
-        escaped_domain = re.escape(domain_clean)
+        escaped_name = re.escape(name_clean) if name_usable else r"(?!)"
+        escaped_domain = re.escape(root_domain)
         escaped_host = re.escape(domain_host) if len(domain_host) >= 4 else r"(?!)"
 
         # Check domain presence directly (domain mention is always unambiguous)
@@ -267,8 +272,7 @@ class VisibilityResponseEvaluator:
         for comp in candidates:
             c_low = comp.lower()
             if (c_low == target_brand_lower or
-                target_brand_lower in c_low or
-                c_low in target_brand_lower or
+                (name_usable and (target_brand_lower in c_low or c_low in target_brand_lower)) or
                 domain_host.lower() in c_low):
                 continue
             comp_pattern = re.compile(rf"\b{re.escape(comp)}\b", re.IGNORECASE)
@@ -281,7 +285,7 @@ class VisibilityResponseEvaluator:
             item_clean = item.strip().replace("**", "")
             i_low = item_clean.lower()
             if (i_low == target_brand_lower or
-                target_brand_lower in i_low or
+                (name_usable and target_brand_lower in i_low) or
                 domain_host.lower() in i_low):
                 continue
             if 2 <= len(item_clean) <= 25:
@@ -294,7 +298,7 @@ class VisibilityResponseEvaluator:
 
         # 3. Recommendation & Endorsement Analysis (Clause-Level Attribution)
         if res.brand_mentioned:
-            rank = cls._detect_list_rank(text, name_clean, domain_clean)
+            rank = cls._detect_list_rank(text, name_clean, root_domain)
             res.visibility_rank = rank
 
             # Break text into lines and sentences
@@ -465,7 +469,7 @@ class VisibilityResponseEvaluator:
             try:
                 u_parsed = urlparse(u)
                 u_host = (u_parsed.netloc or "").split(":")[0].strip().rstrip(".").lower()
-                target_host = domain_clean.strip().rstrip(".").lower()
+                target_host = root_domain.strip().rstrip(".").lower()
                 if u_host == target_host or u_host.endswith("." + target_host):
                     target_citations.append(u)
                 else:
@@ -483,6 +487,10 @@ class VisibilityResponseEvaluator:
         """Detect 1-indexed position if options/tools are presented as an ordered list."""
         b_lower = brand_name.lower()
         d_lower = domain.lower().split(".")[0]
+        alternatives = [re.escape(d_lower)]
+        if len(b_lower) >= 3:
+            alternatives.insert(0, re.escape(b_lower))
+        title_pattern = re.compile(rf"\b({'|'.join(alternatives)})\b")
 
         lines = text.split("\n")
         for line in lines:
@@ -499,7 +507,7 @@ class VisibilityResponseEvaluator:
                     title = re.split(r"[—–\:\-]", item_content)[0].lower()
 
                 # Brand must be in the title/subject of the item, not just mentioned in comparison text
-                brand_in_title = bool(re.search(rf"\b({re.escape(b_lower)}|{re.escape(d_lower)})\b", title))
+                brand_in_title = bool(title_pattern.search(title))
                 if brand_in_title:
                     return item_num
 

@@ -41,7 +41,8 @@ class AIModelProvider(ABC):
         prompt: str,
         system_instruction: Optional[str] = None,
         model_name: Optional[str] = None,
-        temperature: float = 0.2
+        temperature: float = 0.2,
+        **kwargs: Any
     ) -> ProviderResponse:
         """Execute query against AI model and return normalized response."""
         pass

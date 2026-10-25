@@ -2,6 +2,8 @@
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
+from app.core.brand_identity import registrable_domain, registrable_label
+
 
 class GroundedFact(BaseModel):
     id: Optional[str] = None
@@ -43,7 +45,8 @@ class NormalizedBrandProfile(BaseModel):
         tokens = set()
         if self.business_name:
             b_clean = self.business_name.strip().lower()
-            tokens.add(b_clean)
+            if len(b_clean) >= 3:
+                tokens.add(b_clean)
             # Add significant word tokens (e.g. 'OpenRouter' -> 'openrouter', 'Aurora AI' -> 'aurora')
             for part in b_clean.split():
                 if len(part) >= 4 and part not in ("platform", "technologies", "software", "solutions", "group", "cloud", "tools"):
@@ -51,7 +54,8 @@ class NormalizedBrandProfile(BaseModel):
         if self.domain:
             d_clean = self.domain.lower().replace("www.", "").strip()
             tokens.add(d_clean)
-            host = d_clean.split(".")[0]
+            tokens.add(registrable_domain(d_clean))
+            host = registrable_label(d_clean)
             if len(host) >= 3 and host not in ("app", "com", "net", "org", "dev", "io"):
                 tokens.add(host)
         return sorted(tokens, key=len, reverse=True)
@@ -186,38 +190,62 @@ class NormalizedBrandProfile(BaseModel):
 
     def get_clean_subcategories(self) -> List[str]:
         """
-        Extracts verified subcategories or product categories from products and facts,
+        Extracts verified subcategories or product categories from facts and classified taxonomy,
         cleaned of brand names and suitable for natural query slotting.
+        Avoids substituting raw specific product names as category concepts.
         """
         subcats = []
         archetype = self.get_domain_archetype()
 
-        if archetype == "footwear_apparel":
+        corpus = " ".join([
+            self.industry or "",
+            " ".join(self.products_and_services),
+            " ".join(self.use_cases),
+            self.tagline_or_description or "",
+        ]).lower()
+
+        if archetype in ("footwear_apparel", "sportswear_sporting_goods"):
             footwear_subcat_patterns = [
                 "running shoes", "trail running shoes", "road running shoes",
                 "athletic footwear", "trainers", "sneakers", "marathon shoes",
                 "cushioned running shoes", "lightweight trainers", "everyday running shoes"
             ]
-            corpus = " ".join([
-                self.industry or "",
-                " ".join(self.products_and_services),
-                " ".join(self.use_cases),
-                self.tagline_or_description or "",
-            ]).lower()
             for pat in footwear_subcat_patterns:
                 if pat in corpus and pat not in subcats:
                     subcats.append(pat)
 
-        for p in self.get_clean_products():
-            if len(p) >= 4 and p not in subcats:
-                subcats.append(p)
+            apparel_subcat_patterns = [
+                "athletic apparel", "sports clothing", "running gear", "activewear",
+                "training t-shirts", "workout tops", "athletic pants"
+            ]
+            for pat in apparel_subcat_patterns:
+                if pat in corpus and pat not in subcats:
+                    subcats.append(pat)
+
+            gear_subcat_patterns = [
+                "training bags", "gym duffel bags", "sports backpacks", "fitness gear", "outdoor equipment"
+            ]
+            for pat in gear_subcat_patterns:
+                if pat in corpus and pat not in subcats:
+                    subcats.append(pat)
+
+        elif archetype in ("developer_infrastructure", "saas_software"):
+            tech_patterns = [
+                "developer tools", "cloud infrastructure", "api platforms",
+                "model routing", "database systems", "workflow automation software"
+            ]
+            for pat in tech_patterns:
+                if pat in corpus and pat not in subcats:
+                    subcats.append(pat)
 
         if not subcats:
             cat = self.get_primary_category()
             if cat:
-                subcats.append(self.clean_text_of_brand(cat))
+                clean_cat = self.clean_text_of_brand(cat)
+                if len(clean_cat) >= 3 and not any(p in clean_cat.lower() for p in ("select size", "sale", "new & featured")):
+                    subcats.append(clean_cat)
 
-        return subcats or ["solutions in this category"]
+        return subcats or ["athletic footwear and gear" if archetype in ("footwear_apparel", "sportswear_sporting_goods") else "solutions in this category"]
 
     def get_article_topics(self) -> List[str]:
         """
@@ -226,12 +254,16 @@ class NormalizedBrandProfile(BaseModel):
         """
         topics = []
         for f in self.facts:
+            # Industry or company overview facts are not article topics
+            if f.fact_type in ("industry", "business_name", "supported_language", "company_description"):
+                continue
+
             is_article_source = False
             for supp in f.supporting_evidence:
-                if supp.get("source_type") in ("article_topic", "title_heuristic") or "article" in supp.get("source_type", ""):
+                if supp.get("source_type") in ("article_topic", "blog_article") or "article" in supp.get("source_type", ""):
                     is_article_source = True
                     break
-            if f.extraction_method == "article_topic_heuristic":
+            if f.extraction_method in ("article_topic_heuristic", "blog_post_extractor"):
                 is_article_source = True
 
             val = f.fact_value
@@ -247,6 +279,7 @@ class PlannedPromptSlot(BaseModel):
     category: str
     intent: str
     buying_stage: str
+    subcategory: Optional[str] = None
     target_dimension: Optional[str] = None  # e.g., product name, audience segment, differentiator
     dimension_value: Optional[str] = None
     source_fact_ids: List[str] = []
@@ -267,6 +300,8 @@ class GeneratedPromptCandidate(BaseModel):
     category: str
     intent: str
     buying_stage: str
+    subcategory: Optional[str] = None
+    archetype: Optional[str] = None
     target_audience: Optional[str] = None
     target_product_service: Optional[str] = None
     language: str = "en"
@@ -274,3 +309,6 @@ class GeneratedPromptCandidate(BaseModel):
     grounding_evidence: List[str] = []
     scores: Dict[str, float] = {}
     quality_score: float = 1.0
+    is_approved: bool = False
+    rejection_reason: Optional[str] = None
+    template_version: Optional[str] = None

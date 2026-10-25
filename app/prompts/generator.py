@@ -15,6 +15,8 @@ from app.prompts.models import (
     PlannedPromptSlot,
     GeneratedPromptCandidate,
 )
+from app.prompts.classifier import CategoryClassifier
+from app.prompts.templates import TemplateRegistry, SHARED_BASE_SYSTEM_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +48,70 @@ GERUND_TO_BASE = {
     "integrating": "integrate",
     "organizing": "organize",
     "coordinating": "coordinate",
+    "creating": "create",
+    "completing": "complete",
+    "writing": "write",
+    "coding": "code",
+    "generating": "generate",
+    "making": "make",
+    "using": "use",
+    "choosing": "choose",
+    "analyzing": "analyze",
+    "summarizing": "summarize",
+    "designing": "design",
+    "answering": "answer",
+    "researching": "research",
+    "solving": "solve",
+    "learning": "learn",
+    "planning": "plan",
+    "running": "run",
+    "debugging": "debug",
+    "editing": "edit",
+    "processing": "process",
+    "training": "train",
+    "testing": "test",
+    "improving": "improve",
 }
 
 BASE_TO_GERUND = {v: k for k, v in GERUND_TO_BASE.items()}
+
+
+def to_gerund(verb: str) -> str:
+    """Converts a base verb into its proper English gerund form."""
+    v = verb.lower().strip()
+    if v in BASE_TO_GERUND:
+        return BASE_TO_GERUND[v]
+    if v.endswith("ing"):
+        return v
+    if v.endswith("ie"):
+        return v[:-2] + "ying"
+    if v.endswith(("ee", "oe", "ye")):
+        return v + "ing"
+    # Silent 'e' preceded by consonant: drop 'e' before adding 'ing'
+    if v.endswith("e") and len(v) >= 3 and v[-2] not in "aeiouy":
+        return v[:-1] + "ing"
+    # CVC monosyllabic doubling (e.g. plan -> planning, fit -> fitting, jog -> jogging)
+    if len(v) <= 4 and len(v) >= 3 and v[-1] in "bdfgklmnprstz" and v[-2] in "aeiou" and v[-3] not in "aeiou":
+        return v + v[-1] + "ing"
+    return v + "ing"
+
+
+def to_base_verb(gerund: str) -> str:
+    """Converts a gerund verb into its base form."""
+    g = gerund.lower().strip()
+    if g in GERUND_TO_BASE:
+        return GERUND_TO_BASE[g]
+    # Misspelled *eing like 'createing' or 'completeing'
+    if len(g) > 4 and g.endswith("eing") and g[-5] not in "aeiouy":
+        return g[:-3]  # drop 'ing', keeping 'e'
+    if g.endswith("ing"):
+        stem = g[:-3]
+        if stem + "e" in BASE_TO_GERUND:
+            return stem + "e"
+        if len(stem) >= 3 and stem[-1] == stem[-2] and stem[-1] in "bdfgklmnprstz":
+            return stem[:-1]
+        return stem
+    return g
 
 
 def normalize_use_case_forms(phrase: str) -> tuple:
@@ -63,18 +126,20 @@ def normalize_use_case_forms(phrase: str) -> tuple:
     rest = " ".join(words[1:]) if len(words) > 1 else ""
 
     if first_lower in GERUND_TO_BASE:
-        base = GERUND_TO_BASE[first_lower] + (f" {rest}" if rest else "")
-        gerund = p
+        base_word = GERUND_TO_BASE[first_lower]
+        gerund_word = first_lower
     elif first_lower in BASE_TO_GERUND:
-        base = p
-        gerund = BASE_TO_GERUND[first_lower] + (f" {rest}" if rest else "")
+        base_word = first_lower
+        gerund_word = BASE_TO_GERUND[first_lower]
     elif first_lower.endswith("ing"):
-        base = first_lower[:-3] + (f" {rest}" if rest else "")
-        gerund = p
+        gerund_word = to_gerund(to_base_verb(first_lower))
+        base_word = to_base_verb(first_lower)
     else:
-        base = p
-        gerund = (first_lower + "ing") + (f" {rest}" if rest else "")
+        base_word = first_lower
+        gerund_word = to_gerund(first_lower)
 
+    base = base_word + (f" {rest}" if rest else "")
+    gerund = gerund_word + (f" {rest}" if rest else "")
     return base, gerund
 
 
@@ -233,9 +298,9 @@ class DeterministicGenerator(PromptGeneratorProvider):
                 "Top {category} infrastructure designed for {audience}?",
             ],
             "use_cases": [
-                "What solutions are best suited for {use_case}?",
-                "Which platforms help teams handle {use_case}?",
-                "What architecture enables engineering teams to {use_case}?",
+                "What solutions are best suited for {use_case_gerund}?",
+                "Which platforms help teams handle {use_case_gerund}?",
+                "What architecture enables engineering teams to {use_case_base}?",
             ],
             "pricing_value": [
                 "Which {category} platforms offer transparent usage-based pricing?",
@@ -276,9 +341,9 @@ class DeterministicGenerator(PromptGeneratorProvider):
                 "Top {category} systems designed for {audience}?",
             ],
             "use_cases": [
-                "What software is best suited for {use_case}?",
-                "Which platforms help teams manage {use_case}?",
-                "What solutions enable teams to {use_case}?",
+                "What software is best suited for {use_case_gerund}?",
+                "Which platforms help teams manage {use_case_gerund}?",
+                "What solutions enable teams to {use_case_base}?",
             ],
             "pricing_value": [
                 "What should organizations expect to pay for modern {category} software?",
@@ -354,9 +419,9 @@ class DeterministicGenerator(PromptGeneratorProvider):
                 "What solutions are specifically tailored for {audience}?",
             ],
             "use_cases": [
-                "What options are best suited for {use_case}?",
-                "What would you recommend for someone needing {use_case}?",
-                "Which providers specialize in {use_case}?",
+                "What options are best suited for {use_case_gerund}?",
+                "What tools would you recommend for someone looking to {use_case_base}?",
+                "Which providers specialize in {use_case_gerund}?",
             ],
             "pricing_value": [
                 "Which {category} options offer the best value for money?",
@@ -378,10 +443,10 @@ class DeterministicGenerator(PromptGeneratorProvider):
         self, profile: NormalizedBrandProfile, plan: CoveragePlan
     ) -> List[GeneratedPromptCandidate]:
         candidates: List[GeneratedPromptCandidate] = []
-        archetype = profile.get_domain_archetype()
-        archetype_dict = self.ARCHETYPE_TEMPLATES.get(archetype, self.ARCHETYPE_TEMPLATES["general"])
+        classification = CategoryClassifier.classify(profile)
+        archetype = classification.domain_archetype or profile.get_domain_archetype()
 
-        category = profile.get_primary_category() or "solutions in this field"
+        category = classification.primary_category or profile.get_primary_category() or "solutions in this field"
         clean_category = profile.clean_text_of_brand(category) or "solutions in this field"
         clean_subcategories = profile.get_clean_subcategories()
         market_name = profile.target_market or "global markets"
@@ -391,34 +456,47 @@ class DeterministicGenerator(PromptGeneratorProvider):
         clean_use_cases = profile.get_clean_use_cases()
         clean_diffs = profile.get_clean_differentiators()
 
-        # Index templates by category and archetype
+        # Index templates by category, archetype, and subcategory using TemplateRegistry
         for idx, slot in enumerate(plan.slots):
             cat = slot.category
             slot_archetype = slot.archetype or archetype
-            slot_templates = self.ARCHETYPE_TEMPLATES.get(slot_archetype, archetype_dict).get(cat, archetype_dict.get("discovery", []))
+            slot_subcat = slot.subcategory
+
+            # Retrieve category-specific modular templates
+            slot_template_dict = TemplateRegistry.get_templates_for_archetype(slot_archetype, slot_subcat)
+            slot_templates = slot_template_dict.get(cat, slot_template_dict.get("discovery", []))
             template = slot_templates[idx % len(slot_templates)] if slot_templates else "What are the best options for {category}?"
 
             # Context parameters cleaned of any brand mentions
-            raw_product = slot.dimension_value if slot.target_dimension in ("product", "competitors") else (
-                clean_products[0] if clean_products else (clean_subcategories[0] if clean_subcategories else clean_category)
-            )
-            product_val = profile.clean_text_of_brand(str(raw_product)) if raw_product else clean_category
+            # Ensure product entity matches the slot's subcategory
+            subcat_prods = classification.subcategories.get(slot_subcat, []) if slot_subcat else []
+            if slot.target_dimension in ("product", "competitors"):
+                if subcat_prods:
+                    raw_product = subcat_prods[idx % len(subcat_prods)]
+                elif slot.dimension_value:
+                    raw_product = slot.dimension_value
+                else:
+                    raw_product = clean_products[0] if clean_products else clean_category
+            else:
+                raw_product = subcat_prods[0] if subcat_prods else (clean_products[0] if clean_products else clean_category)
+
+            product_val = profile.clean_text_of_brand(str(raw_product)).strip("\"'").strip() if raw_product else clean_category
             if not product_val:
                 product_val = clean_category
 
             raw_audience = slot.dimension_value if slot.target_dimension == "audience" else (
-                clean_audiences[0] if clean_audiences else ("runners" if archetype == "footwear_apparel" else "teams")
+                clean_audiences[0] if clean_audiences else ("runners" if slot_archetype in ("footwear_apparel", "sportswear_sporting_goods") else "teams")
             )
-            audience_val = profile.clean_text_of_brand(str(raw_audience)) if raw_audience else ("runners" if archetype == "footwear_apparel" else "teams")
+            audience_val = profile.clean_text_of_brand(str(raw_audience)).strip("\"'").strip() if raw_audience else ("runners" if slot_archetype in ("footwear_apparel", "sportswear_sporting_goods") else "teams")
             if not audience_val:
-                audience_val = "runners" if archetype == "footwear_apparel" else "teams"
+                audience_val = "runners" if slot_archetype in ("footwear_apparel", "sportswear_sporting_goods") else "teams"
 
             raw_use_case = slot.dimension_value if slot.target_dimension == "use_case" else (
                 clean_use_cases[0] if clean_use_cases else f"evaluating {clean_category}"
             )
-            use_case_val = profile.clean_text_of_brand(str(raw_use_case)) if raw_use_case else f"evaluating {clean_category}"
+            use_case_val = profile.clean_text_of_brand(str(raw_use_case)).strip("\"'").strip() if raw_use_case else f"evaluating {clean_category}"
             if use_case_val.lower().startswith("to "):
-                use_case_val = use_case_val[3:].strip()
+                use_case_val = use_case_val[3:].strip().strip("\"'").strip()
             if not use_case_val:
                 use_case_val = f"evaluating {clean_category}"
             use_case_base, use_case_gerund = normalize_use_case_forms(use_case_val)
@@ -426,14 +504,14 @@ class DeterministicGenerator(PromptGeneratorProvider):
             raw_pricing = slot.dimension_value if slot.target_dimension == "pricing" else (
                 profile.pricing_models[0] if profile.pricing_models else "standard pricing"
             )
-            pricing_val = profile.clean_text_of_brand(str(raw_pricing)) if raw_pricing else "transparent pricing"
+            pricing_val = profile.clean_text_of_brand(str(raw_pricing)).strip("\"'").strip() if raw_pricing else "transparent pricing"
             if not pricing_val:
                 pricing_val = "transparent pricing"
 
             raw_diff = slot.dimension_value if slot.target_dimension == "differentiator" else (
                 clean_diffs[0] if clean_diffs else "advanced capabilities"
             )
-            diff_val = profile.clean_text_of_brand(str(raw_diff)) if raw_diff else "advanced capabilities"
+            diff_val = profile.clean_text_of_brand(str(raw_diff)).strip("\"'").strip() if raw_diff else "advanced capabilities"
             if not diff_val:
                 diff_val = "advanced capabilities"
 
@@ -441,8 +519,18 @@ class DeterministicGenerator(PromptGeneratorProvider):
             if slot.is_article_inspired and slot.dimension_value:
                 prompt_text = transform_article_title_to_question(slot.dimension_value, clean_category)
             else:
-                # Format template safely without brand leakage
-                prompt_cat = clean_subcategories[idx % len(clean_subcategories)] if clean_subcategories else clean_category
+                # Select natural subcategory label tailored to the slot
+                if slot_subcat == "footwear":
+                    prompt_cat = "running shoes"
+                elif slot_subcat == "apparel":
+                    prompt_cat = "athletic apparel"
+                elif slot_subcat == "equipment_gear":
+                    prompt_cat = "training gear and equipment"
+                elif slot_subcat == "developer_tools":
+                    prompt_cat = clean_subcategories[idx % len(clean_subcategories)] if clean_subcategories else (clean_category or "developer tools")
+                else:
+                    prompt_cat = clean_subcategories[idx % len(clean_subcategories)] if clean_subcategories else clean_category
+
                 prompt_text = template.format(
                     brand=prompt_cat,
                     category=prompt_cat,
@@ -494,6 +582,8 @@ class DeterministicGenerator(PromptGeneratorProvider):
                 category=slot.category,
                 intent=slot.intent,
                 buying_stage=slot.buying_stage,
+                subcategory=slot_subcat,
+                archetype=slot_archetype,
                 target_audience=matched_raw_audience if matched_raw_audience else (audience_val if slot.category == "audience_specific" else None),
                 target_product_service=matched_raw_product if matched_raw_product else (product_val if slot.category in ("product_evaluation", "comparisons") else None),
                 language=profile.primary_language,
@@ -501,6 +591,8 @@ class DeterministicGenerator(PromptGeneratorProvider):
                 grounding_evidence=[slot.evidence_snippet] if slot.evidence_snippet else [],
                 scores={},
                 quality_score=1.0,
+                is_approved=False,
+                template_version=TemplateRegistry.get_template_version()
             )
             candidates.append(cand)
 

@@ -2,12 +2,13 @@
 import logging
 from typing import List, Dict, Optional, Any
 from app.prompts.models import NormalizedBrandProfile, CoveragePlan, PlannedPromptSlot
+from app.prompts.classifier import CategoryClassifier
 
 logger = logging.getLogger(__name__)
 
 
 class CoveragePlanner:
-    """Creates a balanced, grounded coverage plan based on available profile dimensions."""
+    """Creates a balanced, grounded coverage plan based on available profile dimensions and category taxonomy."""
 
     @staticmethod
     def create_plan(
@@ -16,15 +17,17 @@ class CoveragePlanner:
         allowed_categories: Optional[List[str]] = None,
         surplus_ratio: float = 1.0
     ) -> CoveragePlan:
-        # Determine organic category grounded strictly in profile evidence
-        category = profile.get_primary_category()
-        if not category:
+        # 1. First stage: Category Classification
+        classification = CategoryClassifier.classify(profile)
+        archetype = classification.domain_archetype
+        primary_cat = classification.primary_category or profile.get_primary_category()
+
+        if not primary_cat:
             raise ValueError(
                 "Cannot create coverage plan: brand profile has insufficient evidence (missing industry, category, products, or use cases). "
                 "Please complete website profiling first."
             )
 
-        archetype = profile.get_domain_archetype()
         clean_products = profile.get_clean_products()
         clean_subcategories = profile.get_clean_subcategories()
         clean_audiences = profile.get_clean_audiences()
@@ -32,12 +35,22 @@ class CoveragePlanner:
         clean_diffs = profile.get_clean_differentiators()
         article_topics = profile.get_article_topics()
 
+        # Identify active subcategories with verified products
+        active_subcats = [k for k, v in classification.subcategories.items() if v and k != "general_product"]
+        if not active_subcats:
+            if archetype in ("footwear_apparel", "sportswear_sporting_goods"):
+                active_subcats = ["footwear"]
+            elif archetype in ("developer_infrastructure", "saas_software"):
+                active_subcats = ["developer_tools"]
+            else:
+                active_subcats = ["general"]
+
         # Determine active dimensions based on real grounded data
         active_dimensions: List[str] = []
         candidate_categories: List[Dict[str, Any]] = []
 
         # 1. Discovery (Broad industry/category awareness)
-        discovery_values = clean_subcategories if clean_subcategories else [category]
+        discovery_values = clean_subcategories if clean_subcategories else [primary_cat]
         candidate_categories.append({
             "category": "discovery",
             "intent": "informational",
@@ -55,7 +68,7 @@ class CoveragePlanner:
             "buying_stage": "consideration",
             "weight": 4,
             "dimension": "category",
-            "values": clean_subcategories or [category]
+            "values": clean_subcategories or [primary_cat]
         })
         active_dimensions.append("recommendations")
 
@@ -73,7 +86,7 @@ class CoveragePlanner:
             active_dimensions.append("product_evaluation")
 
         # 4. Comparisons (Head-to-head or category alternatives)
-        comp_values = clean_subcategories or clean_products or [category]
+        comp_values = clean_subcategories or clean_products or [primary_cat]
         candidate_categories.append({
             "category": "comparisons",
             "intent": "comparative",
@@ -97,7 +110,7 @@ class CoveragePlanner:
             active_dimensions.append("audience_specific")
 
         # 6. Use Cases & Problem Discovery (Prioritize article/guide topics if available)
-        uc_values = (article_topics + clean_use_cases) if article_topics else (clean_use_cases or [f"evaluating {category}"])
+        uc_values = (article_topics + clean_use_cases) if article_topics else (clean_use_cases or [f"evaluating {primary_cat}"])
         candidate_categories.append({
             "category": "use_cases",
             "intent": "informational",
@@ -121,7 +134,7 @@ class CoveragePlanner:
             active_dimensions.append("pricing_value")
 
         # 8. Brand Research & Differentiators
-        diff_values = clean_diffs or article_topics or clean_subcategories or [category]
+        diff_values = clean_diffs or article_topics or clean_subcategories or [primary_cat]
         candidate_categories.append({
             "category": "brand_research",
             "intent": "informational",
@@ -144,7 +157,7 @@ class CoveragePlanner:
                 "buying_stage": "awareness",
                 "weight": 1,
                 "dimension": "industry",
-                "values": [category]
+                "values": [primary_cat]
             }]
 
         # Surplus planning: plan candidate slots to meet or exceed requested_count
@@ -168,8 +181,8 @@ class CoveragePlanner:
             else:
                 break
         while current_total < slots_target:
-            primary_cat = candidate_categories[0]["category"]
-            cat_counts[primary_cat] += 1
+            primary_slot_cat = candidate_categories[0]["category"]
+            cat_counts[primary_slot_cat] += 1
             current_total += 1
 
         # Assemble individual slots
@@ -179,7 +192,16 @@ class CoveragePlanner:
             values_list = cat_info["values"]
 
             for i in range(quota):
-                val = values_list[i % len(values_list)] if values_list else category
+                # Assign subcategory cyclically from verified active subcategories
+                subcat = active_subcats[i % len(active_subcats)]
+
+                # For product dimension, pick product strictly belonging to this subcategory if available
+                subcat_prods = classification.subcategories.get(subcat, [])
+                if cat_info["dimension"] in ("product", "competitors") and subcat_prods:
+                    val = subcat_prods[(i // len(active_subcats)) % len(subcat_prods)]
+                else:
+                    val = values_list[i % len(values_list)] if values_list else primary_cat
+
                 matching_fact_ids = []
                 evidence_text = None
                 relevant_types = {
@@ -188,7 +210,7 @@ class CoveragePlanner:
                     "audience": {"target_audience"},
                     "use_case": {"use_case"},
                     "pricing": {"pricing"},
-                    "differentiator": {"differentiator", "company_description", "business_overview"},
+                    "differentiator": {"differentiator", "company_description", "business_overview", "industry"},
                     "industry": {"industry", "business_overview", "company_description"},
                     "category": {"industry", "business_overview", "company_description"},
                     "brand": {"industry", "business_overview", "company_description"},
@@ -228,6 +250,7 @@ class CoveragePlanner:
                     category=cat_name,
                     intent=cat_info["intent"],
                     buying_stage=cat_info["buying_stage"],
+                    subcategory=subcat,
                     target_dimension=cat_info["dimension"],
                     dimension_value=val,
                     source_fact_ids=matching_fact_ids,

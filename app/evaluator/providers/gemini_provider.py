@@ -26,12 +26,22 @@ def _sanitize_error_message(msg: str) -> str:
 class GeminiModelProvider(AIModelProvider):
     """
     Live AI model provider using Google Gemini API with bounded timeouts,
-    rate limits, token usage tracking, and citation extraction from groundingMetadata.
+    rate limits, connection pooling, and citation extraction from groundingMetadata.
     """
 
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, model_name: Optional[str] = None):
+    DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=25.0, write=10.0, pool=5.0)
+    DEFAULT_LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=30.0)
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        model_name: Optional[str] = None,
+        client: Optional[httpx.AsyncClient] = None
+    ):
         self.api_key = settings.LLM_API_KEY if api_key is None else api_key
         self._default_model = model or model_name or settings.LLM_MODEL or "gemini-1.5-flash"
+        self._client = client
 
     @property
     def provider_name(self) -> str:
@@ -41,12 +51,26 @@ class GeminiModelProvider(AIModelProvider):
     def default_model(self) -> str:
         return self._default_model
 
+    @classmethod
+    def create_client(
+        cls,
+        timeout: Optional[httpx.Timeout] = None,
+        limits: Optional[httpx.Limits] = None
+    ) -> httpx.AsyncClient:
+        """Create a shared pooled httpx AsyncClient for batch query execution."""
+        return httpx.AsyncClient(
+            timeout=timeout or cls.DEFAULT_TIMEOUT,
+            limits=limits or cls.DEFAULT_LIMITS
+        )
+
     async def query(
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
         model_name: Optional[str] = None,
-        temperature: float = 0.2
+        temperature: float = 0.2,
+        client: Optional[httpx.AsyncClient] = None,
+        **kwargs: Any
     ) -> ProviderResponse:
         active_model = model_name or self.default_model
 
@@ -82,129 +106,145 @@ class GeminiModelProvider(AIModelProvider):
                 "parts": [{"text": system_instruction}]
             }
 
+        client_to_use = client or self._client
+        own_client = False
+        if client_to_use is None or client_to_use.is_closed:
+            client_to_use = httpx.AsyncClient(timeout=self.DEFAULT_TIMEOUT, limits=self.DEFAULT_LIMITS)
+            own_client = True
+
         try:
-            async with httpx.AsyncClient(timeout=25.0) as client:
-                res = await client.post(url, json=payload, headers=headers)
-                latency = int((time.time() - start_time) * 1000)
+            res = await client_to_use.post(url, json=payload, headers=headers)
+            latency = int((time.time() - start_time) * 1000)
 
-                if res.status_code != 200:
-                    status = res.status_code
-                    raw_err = res.text[:300]
-                    if status == 429:
-                        prefix = "Rate limit exceeded (HTTP 429)"
-                    elif status in (401, 403):
-                        prefix = f"Authentication failed (HTTP {status})"
-                    else:
-                        prefix = f"Gemini API returned HTTP {status}"
+            if res.status_code != 200:
+                status = res.status_code
+                raw_err = res.text[:300]
+                if status == 429:
+                    prefix = "Rate limit exceeded (HTTP 429)"
+                elif status in (401, 403):
+                    prefix = f"Authentication failed (HTTP {status})"
+                else:
+                    prefix = f"Gemini API returned HTTP {status}"
 
-                    clean_err = _sanitize_error_message(f"{prefix}: {raw_err}")
-                    logger.warning(clean_err)
+                clean_err = _sanitize_error_message(f"{prefix}: {raw_err}")
+                logger.warning(clean_err)
 
-                    # Classify retryability: 429 and 5xx are retryable; 400/401/403/404 are permanent
-                    is_retryable = status in (429, 500, 502, 503, 504)
+                # Classify retryability: 429 and 5xx are retryable; 400/401/403/404 are permanent
+                is_retryable = status in (429, 500, 502, 503, 504)
 
-                    return ProviderResponse(
-                        text="",
-                        provider=self.provider_name,
-                        model_name=active_model,
-                        latency_ms=latency,
-                        is_success=False,
-                        is_retryable=is_retryable,
-                        error_message=clean_err,
-                        metadata={"status_code": status}
-                    )
+                retry_after: Optional[int] = None
+                if "retry-after" in res.headers:
+                    try:
+                        retry_after = int(res.headers["retry-after"])
+                    except (ValueError, TypeError):
+                        pass
 
-                data = res.json()
-
-                # Check prompt feedback (safety blocking)
-                prompt_feedback = data.get("promptFeedback", {})
-                block_reason = prompt_feedback.get("blockReason")
-                if block_reason:
-                    return ProviderResponse(
-                        text="",
-                        provider=self.provider_name,
-                        model_name=active_model,
-                        latency_ms=latency,
-                        is_success=False,
-                        is_retryable=False,
-                        error_message=f"Prompt blocked by Gemini safety filters (reason: {block_reason}).",
-                        metadata=data
-                    )
-
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    return ProviderResponse(
-                        text="",
-                        provider=self.provider_name,
-                        model_name=active_model,
-                        latency_ms=latency,
-                        is_success=False,
-                        is_retryable=False,
-                        error_message="Gemini returned 0 candidates in response.",
-                        metadata=data
-                    )
-
-                first_cand = candidates[0]
-                finish_reason = first_cand.get("finishReason")
-
-                if finish_reason in ("SAFETY", "RECITATION", "BLOCKLIST"):
-                    return ProviderResponse(
-                        text="",
-                        provider=self.provider_name,
-                        model_name=active_model,
-                        latency_ms=latency,
-                        is_success=False,
-                        is_retryable=False,
-                        error_message=f"Gemini content was blocked by safety filters (finishReason: {finish_reason}).",
-                        metadata=data
-                    )
-
-                content_parts = first_cand.get("content", {}).get("parts", [])
-                response_text = "".join(p.get("text", "") for p in content_parts)
-
-                if not response_text.strip():
-                    return ProviderResponse(
-                        text="",
-                        provider=self.provider_name,
-                        model_name=active_model,
-                        latency_ms=latency,
-                        is_success=False,
-                        is_retryable=False,
-                        error_message=f"Gemini returned empty text content (finishReason: {finish_reason or 'UNKNOWN'}).",
-                        metadata=data
-                    )
-
-                usage = data.get("usageMetadata", {})
-                prompt_tokens = usage.get("promptTokenCount")
-                completion_tokens = usage.get("candidatesTokenCount")
-                total_tokens = usage.get("totalTokenCount") or ((prompt_tokens or 0) + (completion_tokens or 0))
-
-                # Extract web grounding citations if available
-                citations: List[str] = []
-                grounding = first_cand.get("groundingMetadata", {})
-                for chunk in grounding.get("groundingChunks", []):
-                    web = chunk.get("web", {})
-                    uri = web.get("uri")
-                    if uri and uri.startswith("http"):
-                        citations.append(uri)
+                resp_metadata: Dict[str, Any] = {"status_code": status}
+                if retry_after is not None:
+                    resp_metadata["retry_after"] = retry_after
 
                 return ProviderResponse(
-                    text=response_text,
+                    text="",
                     provider=self.provider_name,
                     model_name=active_model,
                     latency_ms=latency,
-                    tokens_used=total_tokens if total_tokens > 0 else None,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    grounding_citations=citations,
-                    is_success=True,
-                    is_retryable=False,
-                    metadata={
-                        "finish_reason": finish_reason,
-                        "grounding_citations": citations,
-                        "usage": usage
-                    }
+                    is_success=False,
+                    is_retryable=is_retryable,
+                    error_message=clean_err,
+                    metadata=resp_metadata
                 )
+
+            data = res.json()
+
+            # Check prompt feedback (safety blocking)
+            prompt_feedback = data.get("promptFeedback", {})
+            block_reason = prompt_feedback.get("blockReason")
+            if block_reason:
+                return ProviderResponse(
+                    text="",
+                    provider=self.provider_name,
+                    model_name=active_model,
+                    latency_ms=latency,
+                    is_success=False,
+                    is_retryable=False,
+                    error_message=f"Prompt blocked by Gemini safety filters (reason: {block_reason}).",
+                    metadata=data
+                )
+
+            candidates = data.get("candidates", [])
+            if not candidates:
+                return ProviderResponse(
+                    text="",
+                    provider=self.provider_name,
+                    model_name=active_model,
+                    latency_ms=latency,
+                    is_success=False,
+                    is_retryable=False,
+                    error_message="Gemini returned 0 candidates in response.",
+                    metadata=data
+                )
+
+            first_cand = candidates[0]
+            finish_reason = first_cand.get("finishReason")
+
+            if finish_reason in ("SAFETY", "RECITATION", "BLOCKLIST"):
+                return ProviderResponse(
+                    text="",
+                    provider=self.provider_name,
+                    model_name=active_model,
+                    latency_ms=latency,
+                    is_success=False,
+                    is_retryable=False,
+                    error_message=f"Gemini content was blocked by safety filters (finishReason: {finish_reason}).",
+                    metadata=data
+                )
+
+            content_parts = first_cand.get("content", {}).get("parts", [])
+            response_text = "".join(p.get("text", "") for p in content_parts)
+
+            if not response_text.strip():
+                return ProviderResponse(
+                    text="",
+                    provider=self.provider_name,
+                    model_name=active_model,
+                    latency_ms=latency,
+                    is_success=False,
+                    is_retryable=False,
+                    error_message=f"Gemini returned empty text content (finishReason: {finish_reason or 'UNKNOWN'}).",
+                    metadata=data
+                )
+
+            usage = data.get("usageMetadata", {})
+            prompt_tokens = usage.get("promptTokenCount")
+            completion_tokens = usage.get("candidatesTokenCount")
+            total_tokens = usage.get("totalTokenCount") or ((prompt_tokens or 0) + (completion_tokens or 0))
+
+            # Extract web grounding citations if available
+            citations: List[str] = []
+            grounding = first_cand.get("groundingMetadata", {})
+            for chunk in grounding.get("groundingChunks", []):
+                web = chunk.get("web", {})
+                uri = web.get("uri")
+                if uri and uri.startswith("http"):
+                    citations.append(uri)
+
+            return ProviderResponse(
+                text=response_text,
+                provider=self.provider_name,
+                model_name=active_model,
+                latency_ms=latency,
+                tokens_used=total_tokens if total_tokens > 0 else None,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                grounding_citations=citations,
+                is_success=True,
+                is_retryable=False,
+                metadata={
+                    "finish_reason": finish_reason,
+                    "grounding_citations": citations,
+                    "usage": usage
+                }
+            )
 
         except httpx.TimeoutException:
             latency = int((time.time() - start_time) * 1000)
@@ -230,6 +270,9 @@ class GeminiModelProvider(AIModelProvider):
                 is_retryable=False,
                 error_message=f"Gemini API client error: {clean_err}"
             )
+        finally:
+            if own_client and not client_to_use.is_closed:
+                await client_to_use.aclose()
 
 
 # Alias for backward-compatibility

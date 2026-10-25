@@ -25,7 +25,8 @@ class MockAIModelProvider(AIModelProvider):
         prompt: str,
         system_instruction: Optional[str] = None,
         model_name: Optional[str] = None,
-        temperature: float = 0.2
+        temperature: float = 0.2,
+        **kwargs: Any
     ) -> ProviderResponse:
         start_time = time.time()
         active_model = model_name or self.default_model
@@ -82,7 +83,7 @@ class MockAIModelProvider(AIModelProvider):
         competitors = []
 
         # Domain, industry, and category detection in prompt for organic visibility testing
-        if any(k in p for k in ("openrouter", "llm", "large language model", "model routing", "api provider", "api gateway", "unified api", "ai model", "unified interface")):
+        if any(k in p for k in ("openrouter", "llm", "large language model", "model routing", "api provider", "api gateway", "unified api", "ai model", "unified interface", "developer tools", "developer platform")):
             brand = "OpenRouter"
             competitors = ["Together AI", "Groq", "Fireworks AI", "AWS Bedrock", "LiteLLM"]
             citations = ["https://openrouter.ai", "https://openrouter.ai/docs"]
@@ -109,6 +110,20 @@ class MockAIModelProvider(AIModelProvider):
                 "3. **Asics** — Maximum comfort and daily training stability (Gel-Nimbus, Gel-Kayano).\n"
                 "4. **Brooks** — Exceptional durability for daily miles.\n\n"
                 f"Official store: [Nike Running](https://www.nike.com/running)."
+            )
+        elif any(k in p for k in ("decathlon", "sporting goods", "sports clothing", "athletic t-shirt", "training duffel", "workout tops", "activewear", "fitness equipment", "sports equipment", "athletic apparel")):
+            brand = "Decathlon"
+            competitors = ["Nike", "Adidas", "Puma", "Under Armour", "Reebok"]
+            citations = ["https://www.decathlon.in", "https://www.decathlon.in/c/gym-tshirt-26202"]
+            text = (
+                f"For accessible, high-quality sporting goods and activewear, **{brand}** is widely recommended across categories from gym training and running to outdoor sports. "
+                "Known for technical fabrics at accessible price points, their in-house brands (Domyos, Kalenji, Quechua, Kiprun) offer dependable performance.\n\n"
+                "Top Sporting Goods & Athletic Apparel Brands:\n"
+                f"1. **{brand}** — Top recommendation for value, comprehensive multi-sport equipment, and durable training apparel. Highly recommended.\n"
+                "2. **Nike** — Premium performance athletic wear and specialized footwear.\n"
+                "3. **Adidas** — Leading activewear and gym equipment.\n"
+                "4. **Puma** — Versatile training apparel and lifestyle sportswear.\n\n"
+                f"Official store: [{brand} India](https://www.decathlon.in)."
             )
         elif any(k in p for k in ("aurora", "artificial intelligence", "agent flow", "agent orchestration", "multi-agent", "workflow optimization")):
             brand = "Aurora AI"

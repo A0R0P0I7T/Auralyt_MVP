@@ -146,7 +146,10 @@ class ScraplingCrawler:
     def get_crawl_summary(self) -> Dict[str, Any]:
         """Produce structured canonical crawl budget & performance summary."""
         elapsed = round(time.time() - self.start_time, 2)
-        useful_count = sum(1 for p in self.crawled_pages if len(p.get("extracted_text", "").strip()) > 50)
+        useful_count = sum(
+            1 for p in self.crawled_pages
+            if (p.get("http_status") or 0) < 400 and len(p.get("extracted_text", "").strip()) > 50
+        )
         return {
             "page_limit": self.page_limit,
             "max_depth": self.max_depth,
@@ -268,7 +271,11 @@ class ScraplingCrawler:
             # Fetch and process page with hop-by-hop validation
             page_data = await self._fetch_and_extract(url)
 
-            if page_data:
+            if page_data and (page_data.get("http_status") or 0) >= 400:
+                self.pages_failed += 1
+                self.warnings.append(f"HTTP {page_data.get('http_status')} for {url}")
+                self.crawled_pages.append(page_data)
+            elif page_data:
                 canonical = page_data.get("canonical_url")
                 if canonical and canonical in self.canonical_map:
                     # Duplicate canonical page already crawled

@@ -15,8 +15,32 @@ from app.db.models import Brand, ProfileRun, CrawledPage, BrandFact, utc_now
 from app.crawler.security import validate_and_resolve_url, SecurityValidationError, sanitize_error_summary
 from app.crawler.engine import ScraplingCrawler
 from app.extractor.fact_synthesizer import FactSynthesizer, canonical_fact_key
+from app.core.brand_identity import infer_business_name_from_host, is_inferred_business_name
 
 logger = logging.getLogger(__name__)
+
+BLOCKED_HTTP_STATUSES = (401, 403, 429)
+MIN_USABLE_TEXT_CHARS = 50
+
+
+def assess_crawl_outcome(pages: List[Dict[str, Any]]) -> Optional[str]:
+    """Return a failure reason when a crawl produced no usable content, else None."""
+    usable = [
+        p for p in pages
+        if 200 <= (p.get("http_status") or 0) < 400
+        and len((p.get("extracted_text") or "").strip()) >= MIN_USABLE_TEXT_CHARS
+    ]
+    if usable:
+        return None
+    if not pages:
+        return "No pages could be fetched from the website. Check that the URL is reachable."
+    blocked = sorted({p.get("http_status") for p in pages if p.get("http_status") in BLOCKED_HTTP_STATUSES})
+    if blocked:
+        return (
+            f"The website blocked the crawler (HTTP {blocked[0]}). Engine 1 could not read its content, "
+            "so no brand facts were created."
+        )
+    return "No readable content was extracted from the website, so no brand facts were created."
 
 
 class ProfilerService:
@@ -47,7 +71,7 @@ class ProfilerService:
             result = await db.execute(stmt)
             brand = result.scalars().first()
 
-            inferred_name = business_name or hostname.replace("www.", "").split(".")[0].capitalize()
+            inferred_name = business_name or infer_business_name_from_host(hostname)
 
             if not brand:
                 brand = Brand(
@@ -65,12 +89,15 @@ class ProfilerService:
                 # Update provided metadata
                 if business_name:
                     brand.business_name = business_name
+                elif is_inferred_business_name(brand.business_name, hostname):
+                    brand.business_name = inferred_name
                 if industry:
                     brand.industry = industry
                 if target_market:
                     brand.target_market = target_market
                 if language:
                     brand.language = language
+                brand.profile_version = (brand.profile_version or 1) + 1
 
             # 3. Create ProfileRun
             run = ProfileRun(
@@ -166,11 +193,31 @@ class ProfilerService:
 
                 await db.flush()
 
+                failure_reason = assess_crawl_outcome(extracted_pages_data)
+                if failure_reason:
+                    run.status = "failed"
+                    run.completed_at = utc_now()
+                    run.duration_seconds = round(time.time() - start_time, 2)
+                    run.pages_discovered = crawler.pages_discovered
+                    run.pages_attempted = crawler.pages_attempted
+                    run.pages_succeeded = crawler.pages_succeeded
+                    run.pages_skipped = crawler.pages_skipped
+                    run.pages_failed = crawler.pages_failed
+                    run.warnings = crawler.warnings
+                    run.crawl_summary = crawler.get_crawl_summary()
+                    run.error_summary = failure_reason
+                    await db.commit()
+                    logger.warning(f"Profile run {run_id} failed: {failure_reason}")
+                    return
+
                 # Synthesize Brand Facts
+                user_business_name = (
+                    None if is_inferred_business_name(brand.business_name, brand.domain) else brand.business_name
+                )
                 synthesizer = FactSynthesizer(
                     brand_id=brand.id,
                     profile_version=run.profile_version,
-                    user_business_name=brand.business_name,
+                    user_business_name=user_business_name,
                     user_industry=brand.industry,
                     user_target_market=brand.target_market,
                     user_language=brand.language
@@ -182,6 +229,18 @@ class ProfilerService:
                     inferred_cat = next((f.fact_value for f in new_facts if f.fact_type in ("industry", "category")), None)
                     if inferred_cat:
                         brand.industry = inferred_cat if isinstance(inferred_cat, str) else str(inferred_cat.get("name", inferred_cat))
+
+                has_usable_evidence = bool(
+                    brand.industry
+                    or any(f.fact_type in ("industry", "category", "product_service", "use_case") for f in new_facts)
+                )
+                if not has_usable_evidence:
+                    insufficient_msg = (
+                        "Brand profile has insufficient evidence (missing industry, category, products, or use cases). "
+                        "Downstream prompt generation will require additional content or manual confirmation."
+                    )
+                    if insufficient_msg not in crawler.warnings:
+                        crawler.warnings.append(insufficient_msg)
 
                 # A warning/failed-page run is not a complete snapshot. Merge its
 
@@ -262,7 +321,7 @@ class ProfilerService:
         active_run = run_res.scalars().first()
         snapshot_stmt = select(ProfileRun).where(
             ProfileRun.brand_id == brand_id,
-            ProfileRun.status == "completed",
+            ProfileRun.status.in_(["completed", "completed_with_warnings"]),
         ).order_by(desc(ProfileRun.completed_at))
         snapshot_res = await db.execute(snapshot_stmt)
         snapshot_run = snapshot_res.scalars().first()

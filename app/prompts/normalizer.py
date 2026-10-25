@@ -1,9 +1,52 @@
 """Stage A: Profile Normalization for Engine 2 Prompt Intelligence."""
+import re
 import logging
 from typing import Dict, Any, List, Optional
 from app.prompts.models import NormalizedBrandProfile, GroundedFact
 
 logger = logging.getLogger(__name__)
+
+
+def decompose_compound_capabilities(text: str) -> List[str]:
+    """
+    Decomposes multi-clause compound capability strings
+    (e.g., 'answer questions, write, create images, complete work, and code')
+    into individual, atomic user intents so prompts express a single coherent goal.
+    """
+    clean = text.strip().strip("\"'").rstrip(".")
+    if "," in clean or " and " in clean.lower():
+        parts = re.split(r",\s*(?:and\s+)?|\s+and\s+", clean, flags=re.IGNORECASE)
+        decomposed = [p.strip().strip("\"'").rstrip(".") for p in parts if p.strip().strip("\"'")]
+        if len(decomposed) >= 2 and all(len(p) <= 60 for p in decomposed):
+            return decomposed
+    return [clean] if clean else []
+
+
+UI_NAVIGATION_NOISE_PATTERNS = {
+    "select size", "size guide", "add to cart", "add to bag", "buy now", "quick buy",
+    "sale", "clearance", "new & featured", "new and featured", "featured", "shop all",
+    "view all", "all products", "shop now", "order status", "track order", "store locator",
+    "find a store", "sign in", "sign up", "log in", "login", "register", "my account",
+    "customer care", "help center", "contact us", "faq", "faqs", "terms and conditions",
+    "terms & conditions", "privacy policy", "cookie policy", "all rights reserved",
+    "official online store", "online store", "gift cards", "wishlist", "cart", "checkout",
+    "menu", "search", "close", "back to top", "home"
+}
+
+
+def is_navigation_or_ui_noise(text: Optional[str]) -> bool:
+    if not text:
+        return True
+    t = text.strip().lower()
+    if t in UI_NAVIGATION_NOISE_PATTERNS:
+        return True
+    if "official online store" in t or "select size" in t:
+        return True
+    if t.startswith("buy ") and "online" in t and len(t) < 40:
+        return True
+    if t in ("women", "men", "kids", "boys", "girls", "unisex") and len(t.split()) == 1:
+        return True
+    return False
 
 
 def _get_attr_or_key(obj: Any, key: str, default: Any = None) -> Any:
@@ -80,10 +123,14 @@ class ProfileNormalizer:
                     p_name = p_val
                 else:
                     p_name = None
-                if p_name and isinstance(p_name, str) and p_name.strip() not in products:
-                    products.append(p_name.strip())
-            elif isinstance(p, str) and p.strip() not in products:
-                products.append(p.strip())
+                if p_name and isinstance(p_name, str) and not is_navigation_or_ui_noise(p_name):
+                    clean_name = p_name.strip()
+                    if clean_name not in products:
+                        products.append(clean_name)
+            elif isinstance(p, str) and not is_navigation_or_ui_noise(p):
+                clean_name = p.strip()
+                if clean_name not in products:
+                    products.append(clean_name)
 
         # Pull from facts if empty
         if not products:
@@ -91,8 +138,10 @@ class ProfileNormalizer:
                 if f.fact_type in ("product_service", "product_feature"):
                     val = f.fact_value
                     name = val.get("name") if isinstance(val, dict) else str(val)
-                    if name and name.strip() not in products:
-                        products.append(name.strip())
+                    if name and isinstance(name, str) and not is_navigation_or_ui_noise(name):
+                        clean_name = name.strip()
+                        if clean_name not in products:
+                            products.append(clean_name)
 
         # 3. Target Audiences
         raw_audiences = data.get("target_audience", [])
@@ -135,18 +184,24 @@ class ProfileNormalizer:
                     uc_title = uc_val
                 else:
                     uc_title = None
-                if uc_title and isinstance(uc_title, str) and uc_title.strip() not in use_cases:
-                    use_cases.append(uc_title.strip())
-            elif isinstance(uc, str) and uc.strip() not in use_cases:
-                use_cases.append(uc.strip())
+                if uc_title and isinstance(uc_title, str):
+                    for item in decompose_compound_capabilities(uc_title):
+                        if item and item.strip() and item.strip() not in use_cases:
+                            use_cases.append(item.strip())
+            elif isinstance(uc, str):
+                for item in decompose_compound_capabilities(uc):
+                    if item and item.strip() and item.strip() not in use_cases:
+                        use_cases.append(item.strip())
 
         if not use_cases:
             for f in grounded_facts:
                 if f.fact_type == "use_case":
                     val = f.fact_value
-                    name = val.get("title") if isinstance(val, dict) else str(val)
-                    if name and name.strip() not in use_cases:
-                        use_cases.append(name.strip())
+                    name = (val.get("title") or val.get("use_case") or val.get("description")) if isinstance(val, dict) else str(val)
+                    if name:
+                        for item in decompose_compound_capabilities(str(name)):
+                            if item and item.strip() and item.strip() not in use_cases:
+                                use_cases.append(item.strip())
 
         # 5. Pricing Models
         raw_pricing = data.get("pricing_information", [])

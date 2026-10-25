@@ -278,11 +278,15 @@ function updateExperimentStep(stepNum, status, detail) {
 
   badge.innerText = status;
   if (status === "RUNNING") {
-    badge.className = "badge badge-pending";
+    badge.className = "badge badge-running";
   } else if (status === "COMPLETED") {
     badge.className = "badge badge-completed";
+  } else if (status === "WARNING" || status === "LIMITATIONS") {
+    badge.className = "badge badge-warning";
   } else if (status === "FAILED") {
     badge.className = "badge badge-failed";
+  } else if (status === "BLOCKED" || status === "SKIPPED") {
+    badge.className = "badge badge-pending";
   } else {
     badge.className = "badge";
   }
@@ -308,6 +312,7 @@ async function handleRunExperiment(event) {
   const errorBox = document.getElementById("exp-error");
   const runBtn = document.getElementById("exp-run-btn");
   const progressCard = document.getElementById("exp-progress-card");
+  const progressBadge = document.getElementById("exp-progress-badge");
   const resultsContainer = document.getElementById("exp-results-container");
 
   const websiteUrl = urlInput.value.trim();
@@ -318,6 +323,10 @@ async function handleRunExperiment(event) {
   errorBox.innerText = "";
   resultsContainer.style.display = "none";
   progressCard.style.display = "block";
+  if (progressBadge) {
+    progressBadge.className = "badge badge-running";
+    progressBadge.innerText = "RUNNING";
+  }
   runBtn.disabled = true;
   runBtn.innerText = "⏳ Running Pipeline...";
 
@@ -334,10 +343,13 @@ async function handleRunExperiment(event) {
     if (el) el.innerText = `${elapsed}s elapsed`;
   }, 1000);
 
+  let activeStep = 1;
+
   try {
     // -----------------------------------------------------------------
     // STEP 1: Engine 1 (Website Profiling & Fact Extraction)
     // -----------------------------------------------------------------
+    activeStep = 1;
     updateExperimentProgress(15, "Engine 1: Dispatching crawl request...");
     const onboardRes = await fetch("/api/brands/profile", {
       method: "POST",
@@ -358,6 +370,9 @@ async function handleRunExperiment(event) {
     currentBrandId = brandId;
     currentRunId = runId;
 
+    // Immediately synchronize active brand selector so the UI displays the brand being tested
+    await initBrandSelector(brandId);
+
     // Poll profile run until completed or failed
     let e1Completed = false;
     let pollAttempts = 0;
@@ -376,7 +391,12 @@ async function handleRunExperiment(event) {
 
       if (runData.status === "completed" || runData.status === "completed_with_warnings") {
         e1Completed = true;
-        updateExperimentStep(1, "COMPLETED", `${succeeded} pages crawled & facts synthesized`);
+        if (runData.status === "completed_with_warnings" || (runData.warnings && runData.warnings.length > 0)) {
+          const warnText = (runData.warnings && runData.warnings[0]) || "Completed with limitations";
+          updateExperimentStep(1, "WARNING", `${succeeded} pages crawled (${warnText})`);
+        } else {
+          updateExperimentStep(1, "COMPLETED", `${succeeded} pages crawled & facts synthesized`);
+        }
       } else if (runData.status === "failed") {
         throw new Error(`Engine 1 failed: ${runData.error_summary || "Crawl interrupted"}`);
       }
@@ -385,6 +405,7 @@ async function handleRunExperiment(event) {
     // -----------------------------------------------------------------
     // STEP 2: Engine 2 (Grounded Prompt Intelligence)
     // -----------------------------------------------------------------
+    activeStep = 2;
     updateExperimentStep(2, "RUNNING", `Synthesizing ${promptCount} grounded prompts...`);
     updateExperimentProgress(45, `Engine 2: Generating ${promptCount} buyer prompts from profile facts...`);
 
@@ -409,6 +430,7 @@ async function handleRunExperiment(event) {
     // -----------------------------------------------------------------
     // STEP 3: Engine 3 (AI Visibility Evaluation via Provider)
     // -----------------------------------------------------------------
+    activeStep = 3;
     updateExperimentStep(3, "RUNNING", `Dispatching ${generatedCount} prompts to ${provider.toUpperCase()}...`);
     updateExperimentProgress(65, `Engine 3: Initiating visibility scan via ${provider}...`);
 
@@ -432,28 +454,53 @@ async function handleRunExperiment(event) {
 
     // Poll scan until completed or failed
     let e3Completed = false;
+    let pollData = null;
+    const pollStartTime = Date.now();
+    const maxPollDurationMs = Math.max(180000, promptCount * 12000);
+
     while (!e3Completed) {
+      if (Date.now() - pollStartTime > maxPollDurationMs) {
+        throw new Error(`Engine 3 evaluation timed out after ${Math.round(maxPollDurationMs / 1000)} seconds.`);
+      }
+
       await new Promise(r => setTimeout(r, 1500));
       const pollRes = await fetch(`/api/brands/${brandId}/visibility/scans/${scanId}`);
       if (!pollRes.ok) continue;
-      const pollData = await pollRes.json();
+      pollData = await pollRes.json();
 
       const done = pollData.prompts_completed || 0;
+      const failed = pollData.prompts_failed || 0;
       const total = pollData.prompts_selected || promptCount;
-      updateExperimentStep(3, "RUNNING", `Evaluating: ${done} / ${total} prompts processed`);
-      const pct = Math.min(95, 65 + Math.floor((done / Math.max(1, total)) * 30));
-      updateExperimentProgress(pct, `Engine 3: Querying ${provider} (${done}/${total} completed)...`);
+      const processed = done + failed;
+      updateExperimentStep(3, "RUNNING", `Evaluating: ${processed} / ${total} prompts processed`);
+      const pct = Math.min(95, 65 + Math.floor((processed / Math.max(1, total)) * 30));
+      updateExperimentProgress(pct, `Engine 3: Querying ${provider} (${processed}/${total} processed)...`);
 
-      if (pollData.status === "completed" || pollData.status === "completed_with_warnings") {
+      if (pollData.status === "completed" || pollData.status === "completed_with_warnings" || pollData.status === "completed_with_errors") {
         e3Completed = true;
-        updateExperimentStep(3, "COMPLETED", `Score: ${pollData.visibility_score != null ? Number(pollData.visibility_score).toFixed(1) : "N/A"}/100`);
+        const scoreStr = pollData.visibility_score != null ? `${Number(pollData.visibility_score).toFixed(1)}/100` : "N/A";
+        if (pollData.status === "completed_with_errors" || failed > 0) {
+          updateExperimentStep(3, "COMPLETED", `Score: ${scoreStr} (${done}/${total} succeeded, ${failed} failed)`);
+        } else {
+          updateExperimentStep(3, "COMPLETED", `Score: ${scoreStr}`);
+        }
       } else if (pollData.status === "failed") {
+        updateExperimentStep(3, "FAILED", pollData.error_summary || "Visibility evaluation failed");
         throw new Error(`Engine 3 failed: ${pollData.error_summary || "Visibility evaluation failed"}`);
       }
     }
 
     updateExperimentProgress(100, "Pipeline completed! Loading full visibility report...");
     clearInterval(timer);
+    if (progressBadge) {
+      if (pollData && pollData.status === "completed_with_errors") {
+        progressBadge.className = "badge badge-warning";
+        progressBadge.innerText = "COMPLETED (WITH ERRORS)";
+      } else {
+        progressBadge.className = "badge badge-completed";
+        progressBadge.innerText = "COMPLETED";
+      }
+    }
 
     // -----------------------------------------------------------------
     // STEP 4: Render Complete Results
@@ -467,11 +514,34 @@ async function handleRunExperiment(event) {
     url.searchParams.set("scan_id", scanId);
     window.history.replaceState({}, "", url);
 
-    await initBrandSelector();
+    await initBrandSelector(brandId);
   } catch (err) {
     console.error("Experiment pipeline error:", err);
     clearInterval(timer);
-    errorBox.innerText = err.message || "An unexpected error occurred during pipeline execution.";
+
+    if (progressBadge) {
+      progressBadge.className = "badge badge-failed";
+      progressBadge.innerText = "FAILED";
+    }
+
+    if (activeStep === 1) {
+      updateExperimentStep(1, "FAILED", err.message || "Crawling and profiling failed");
+      updateExperimentStep(2, "SKIPPED", "Skipped: Prerequisite Engine 1 profiling failed");
+      updateExperimentStep(3, "SKIPPED", "Skipped: Prerequisite Engine 1 profiling failed");
+    } else if (activeStep === 2) {
+      updateExperimentStep(2, "FAILED", err.message || "Prompt generation failed");
+      updateExperimentStep(3, "BLOCKED", "Blocked: Prerequisite Engine 2 failed (no approved prompts)");
+    } else if (activeStep === 3) {
+      updateExperimentStep(3, "FAILED", err.message || "Visibility evaluation failed");
+    }
+
+    let errorDetail = err.message || "An unexpected error occurred during pipeline execution.";
+    if (errorDetail.includes("insufficient evidence")) {
+      errorDetail += "\n\nActionable Recovery: The crawled pages did not provide enough grounded business context (missing category, products, or use cases). Provide brand metadata (business name, industry, and description) in the Brand Profile tab, or enter a website URL with accessible, indexable content.";
+    } else if (errorDetail.includes("Authentication failed") || errorDetail.includes("API key not valid") || errorDetail.includes("UNAUTHENTICATED") || errorDetail.includes("All prompt queries failed")) {
+      errorDetail += "\n\nActionable Recovery: The configured AI provider failed authentication (invalid or unauthenticated LLM_API_KEY). To evaluate offline without an external API key, switch the AI Provider dropdown to 'Offline Deterministic Mock', or update your environment with a valid Google Gemini API key.";
+    }
+    errorBox.innerText = errorDetail;
     errorBox.style.display = "block";
     updateExperimentProgress(0, "Pipeline interrupted due to an error.");
   } finally {
@@ -1367,9 +1437,14 @@ function renderPromptsTable(items) {
     else if (scoreVal >= 0.6) scoreClass = "score-mid";
 
     const isApproved = p.is_approved;
-    const statusPill = isApproved
-      ? `<span class="badge" style="background: rgba(16,185,129,0.2); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.4);">Approved</span>`
-      : `<span class="badge" style="background: rgba(148,163,184,0.2); color: #94a3b8; border: 1px solid rgba(148,163,184,0.4);">Pending</span>`;
+    let statusPill = "";
+    if (p.is_archived) {
+      statusPill = `<span class="badge" style="background: rgba(239,68,68,0.2); color: #fca5a5; border: 1px solid rgba(239,68,68,0.4);">Archived / Rejected</span>`;
+    } else if (isApproved) {
+      statusPill = `<span class="badge" style="background: rgba(16,185,129,0.2); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.4);">Approved</span>`;
+    } else {
+      statusPill = `<span class="badge" style="background: rgba(245,158,11,0.2); color: #fcd34d; border: 1px solid rgba(245,158,11,0.4);">Pending Review</span>`;
+    }
 
     const editedPill = p.user_edited ? `<span class="badge-edited">EDITED</span>` : "";
 
@@ -1712,15 +1787,31 @@ function startScanPolling(scanId) {
     btn.innerText = "⚡ Evaluating Prompts...";
   }
 
+  const pollStartTime = Date.now();
   const checkStatus = async () => {
     try {
+      if (Date.now() - pollStartTime > 180000) {
+        clearInterval(evalPollInterval);
+        evalPollInterval = null;
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "🚀 Run AI Visibility Scan";
+        }
+        const errorBanner = document.getElementById("eval-error-banner");
+        if (errorBanner) {
+          errorBanner.innerText = "Visibility scan polling timed out after 180s. Refresh page to view updated status.";
+          errorBanner.style.display = "block";
+        }
+        return;
+      }
+
       const res = await fetch(`/api/brands/${currentBrandId}/visibility/scans/${scanId}`);
       if (!res.ok) return;
       const scan = await res.json();
 
       updateScanSummaryUI(scan);
 
-      if (scan.status === "completed" || scan.status === "completed_with_warnings" || scan.status === "failed") {
+      if (scan.status === "completed" || scan.status === "completed_with_warnings" || scan.status === "completed_with_errors" || scan.status === "failed") {
         clearInterval(evalPollInterval);
         evalPollInterval = null;
 
@@ -1729,11 +1820,19 @@ function startScanPolling(scanId) {
           btn.innerText = "🚀 Run AI Visibility Scan";
         }
 
+        const errorBanner = document.getElementById("eval-error-banner");
         if (scan.status === "failed") {
-          const errorBanner = document.getElementById("eval-error-banner");
-          errorBanner.innerText = scan.error_summary || "Visibility scan failed.";
-          errorBanner.style.display = "block";
+          if (errorBanner) {
+            errorBanner.innerText = scan.error_summary || "Visibility scan failed.";
+            errorBanner.style.display = "block";
+          }
         } else {
+          if (scan.status === "completed_with_errors" && errorBanner) {
+            errorBanner.innerText = `Scan completed with partial errors: ${scan.error_summary || "Some prompts failed to evaluate."}`;
+            errorBanner.style.display = "block";
+          } else if (errorBanner) {
+            errorBanner.style.display = "none";
+          }
           await loadScanResults(scan.id);
         }
 
@@ -1768,7 +1867,7 @@ function updateScanSummaryUI(scan) {
   badge.innerText = (scan.status || "READY").toUpperCase().replace(/_/g, ' ');
   let badgeClass = "badge-pending";
   if (scan.status === "completed") badgeClass = "badge-completed";
-  else if (scan.status === "completed_with_warnings") badgeClass = "badge-warning";
+  else if (scan.status === "completed_with_warnings" || scan.status === "completed_with_errors") badgeClass = "badge-warning";
   else if (scan.status === "failed") badgeClass = "badge-failed";
   badge.className = `badge ${badgeClass}`;
 
@@ -1785,8 +1884,13 @@ function updateScanSummaryUI(scan) {
   document.getElementById("stat-avg-position").innerText = avgPos ? `#${avgPos.toFixed(1)}` : "N/A";
 
   const completed = scan.prompts_completed != null ? scan.prompts_completed : (scan.completed_prompts || 0);
+  const failed = scan.prompts_failed || 0;
   const total = scan.prompts_selected != null ? scan.prompts_selected : (scan.total_prompts || 0);
-  document.getElementById("stat-eval-completed").innerText = `${completed} / ${total}`;
+  if (failed > 0) {
+    document.getElementById("stat-eval-completed").innerText = `${completed} / ${total} (${failed} failed)`;
+  } else {
+    document.getElementById("stat-eval-completed").innerText = `${completed} / ${total}`;
+  }
 
   const infoBox = document.getElementById("eval-run-info");
   infoBox.style.display = "block";
@@ -1968,7 +2072,7 @@ function openRawResponseModal(resultId) {
    GLOBAL BRAND SELECTOR & INITIALIZATION
    ========================================================== */
 
-async function initBrandSelector() {
+async function initBrandSelector(targetBrandId = null) {
   try {
     const res = await fetch("/api/brands");
     if (!res.ok) return;
@@ -1986,7 +2090,7 @@ async function initBrandSelector() {
     `).join("");
 
     const urlParams = new URLSearchParams(window.location.search);
-    const paramBrandId = urlParams.get("brand_id");
+    const paramBrandId = targetBrandId || urlParams.get("brand_id") || currentBrandId;
 
     if (paramBrandId && brands.some(b => b.id === paramBrandId)) {
       currentBrandId = paramBrandId;
@@ -1994,6 +2098,14 @@ async function initBrandSelector() {
     } else if (!currentBrandId) {
       currentBrandId = brands[0].id;
       select.value = brands[0].id;
+    }
+
+    const urlInput = document.getElementById("exp-website-url");
+    if (urlInput && !urlInput.value.trim()) {
+      const activeBrand = brands.find(b => b.id === currentBrandId);
+      if (activeBrand && activeBrand.domain) {
+        urlInput.value = `https://${activeBrand.domain}`;
+      }
     }
 
     if (currentBrandId) {
@@ -2011,6 +2123,17 @@ async function handleSelectBrand(brandId) {
   const url = new URL(window.location);
   url.searchParams.set("brand_id", brandId);
   window.history.replaceState({}, "", url);
+
+  try {
+    const res = await fetch(`/api/brands/${brandId}`);
+    if (res.ok) {
+      const b = await res.json();
+      const urlInput = document.getElementById("exp-website-url");
+      if (urlInput && b.domain) {
+        urlInput.value = `https://${b.domain}`;
+      }
+    }
+  } catch (e) {}
 
   const activeBtn = document.querySelector(".nav-btn.active");
   const activeTab = activeBtn ? activeBtn.getAttribute("onclick")?.match(/'([^']+)'/)?.[1] : "profile";

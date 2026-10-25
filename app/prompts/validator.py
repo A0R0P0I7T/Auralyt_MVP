@@ -37,6 +37,9 @@ class PromptValidator:
         if not text.endswith("?"):
             return False, "Prompt must end with a question mark."
 
+        if text.count('"') % 2 != 0:
+            return False, "Prompt contains unbalanced quotation marks."
+
         valid_starters = (
             "what", "which", "how", "why", "where", "who", "when", "is", "can",
             "are", "does", "do", "best", "top", "compare", "should", "recommend", "i'm", "im"
@@ -44,9 +47,40 @@ class PromptValidator:
         if not any(lowered.startswith(w) or f" {w} " in lowered for w in valid_starters):
             return False, "Prompt lacks natural query or question structure."
 
-        # 2b. Domain Archetype Category Locking
+        # 2a. Deterministic Natural-Language & Spelling Integrity Checks
+        # Repeated words check (e.g. 'the the', 'for for')
+        rep_match = re.search(r"\b([a-zA-Z]{2,})\s+\1\b", lowered)
+        if rep_match:
+            return False, f"Prompt contains repeated consecutive word '{rep_match.group(1)}'."
+        # Check for malformed gerund spelling (e.g. createing, completeing, writeing where silent 'e' was not dropped)
+        # Excludes valid English words like being, well-being, ageing
+        malformed_gerund = re.search(r"\b(?!(?:being|well-being|ageing)\b)[a-z]+[bcdfghjklmnpqrstvwxz]eing\b", lowered)
+        if malformed_gerund:
+            return False, f"Prompt contains malformed gerund spelling '{malformed_gerund.group(0)}'."
+
+        # Check for awkward double participles / ungrammatical 'needing <gerund>'
+        if re.search(r"\bneeding\s+[a-z]+ing\b", lowered):
+            return False, "Prompt contains awkward double participle or ungrammatical 'needing <gerund>' phrasing."
+
+        # Check for compound capability dumps / mechanically spliced capability lists
+        if re.search(r"(?:,\s*(?:write|create|complete|code|answer|generate|build|manage|track|scale|and\s+[a-z]+)){2,}", lowered) or (
+            lowered.count(",") >= 3 and any(w in lowered for w in ("write", "create", "complete", "code", "answer", "images", "questions"))
+        ):
+            return False, "Prompt contains unnatural compound capability dump combining multiple unrelated actions."
+
+        # 2b. Domain Archetype Category Locking & Navigation Noise Rejection
+        from app.prompts.normalizer import is_navigation_or_ui_noise, UI_NAVIGATION_NOISE_PATTERNS
+
+        # Check for navigation noise in text or target_product_service
+        if candidate.target_product_service and is_navigation_or_ui_noise(candidate.target_product_service):
+            return False, f"Prompt targets navigation or UI artifact '{candidate.target_product_service}' instead of a valid product."
+
+        for noise in ("select size", "new & featured", "new and featured", "official online store", "shop all sale"):
+            if re.search(rf"\b{re.escape(noise)}\b", lowered):
+                return False, f"Prompt contains navigation/UI noise phrase '{noise}'."
+
         archetype = profile.get_domain_archetype()
-        if archetype == "footwear_apparel":
+        if archetype in ("footwear_apparel", "sportswear_sporting_goods"):
             incompatible_terms = (
                 "software", "api", "database", "saas", "cloud infrastructure", "backend",
                 "devops", "kubernetes", "sql", "crm", "serverless", "microservices",
@@ -56,6 +90,35 @@ class PromptValidator:
             for term in incompatible_terms:
                 if re.search(rf"\b{re.escape(term)}\b", lowered):
                     return False, f"Prompt contains term '{term}' incompatible with footwear/apparel archetype."
+
+            # Category / Subcategory Semantic Compatibility
+            # Footwear-specific questions: cushioning, arch support, running shoe mileage, daily trainers, etc.
+            footwear_query_signals = (
+                "cushioning", "arch support", "shock absorption", "daily trainer", "daily trainers",
+                "racing shoe", "trail running", "road running", "long distance run", "long distance runs",
+                "high mileage", "cushioned and lightweight", "stability or neutral", "blister",
+                "running shoe", "running shoes", "marathon"
+            )
+            is_footwear_query = any(sig in lowered for sig in footwear_query_signals)
+
+            prod_target = (candidate.target_product_service or "").lower()
+            apparel_signals = ("shirt", "t-shirt", "top", "crew-neck", "jacket", "hoodie", "tracksuit", "trousers", "pants", "shorts", "bra", "dress")
+            gear_signals = ("bag", "duffel", "backpack", "tent", "sleeping bag", "mat", "bottle", "racket", "ball")
+
+            if is_footwear_query:
+                # If question is explicitly about footwear features/cushioning/running, product must not be a bag or shirt
+                if any(re.search(rf"\b{re.escape(sig)}\b", prod_target) for sig in apparel_signals) or any(re.search(rf"\b{re.escape(sig)}\b", lowered) and sig in prod_target for sig in apparel_signals):
+                    return False, "Category mismatch: footwear-specific feature or running query applied to incompatible apparel product."
+                if any(re.search(rf"\b{re.escape(sig)}\b", prod_target) for sig in gear_signals) or any(re.search(rf"\b{re.escape(sig)}\b", lowered) and sig in prod_target for sig in gear_signals):
+                    return False, "Category mismatch: footwear-specific feature or running query applied to incompatible bag or gear product."
+                # Also check prompt text itself for incompatible phrasing (e.g. duffel bag have best cushioning)
+                for bag_word in ("duffel bag", "training duffel", "backpack", "gym bag"):
+                    if bag_word in lowered and any(f in lowered for f in ("cushioning", "arch support", "shock absorption", "high mileage", "long distance")):
+                        return False, f"Category mismatch: footwear feature query combined with bag product '{bag_word}'."
+                for app_word in ("crew-neck", "button-up shirt", "t-shirt", "oversized top", "tracksuit"):
+                    if app_word in lowered and any(f in lowered for f in ("cushioning", "arch support", "long distance runs", "high mileage")):
+                        return False, f"Category mismatch: footwear feature query combined with apparel product '{app_word}'."
+
         elif archetype == "developer_infrastructure":
             footwear_terms = ("sneakers", "running shoes", "footwear", "trainers", "skincare", "cosmetics", "dresses")
             for term in footwear_terms:

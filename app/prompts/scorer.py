@@ -29,10 +29,38 @@ def token_jaccard_similarity(t1: str, t2: str) -> float:
     return len(intersection) / len(union)
 
 
+QUESTION_STOPWORDS = {
+    "what", "which", "how", "why", "who", "where", "when",
+    "is", "are", "do", "does", "can", "should", "could", "would",
+    "the", "a", "an", "and", "or", "in", "on", "at", "for", "to", "of", "with",
+    "best", "top", "recommended", "recommend", "options", "providers", "solutions",
+    "someone", "people", "users", "teams", "tools", "platforms", "choice", "choices",
+    "good", "great", "better", "most", "right", "seeking", "looking", "needing",
+    "i", "me", "my", "you", "your", "use", "using", "useful"
+}
+
+
+def extract_core_intent_tokens(text: str) -> Set[str]:
+    """Extract substantive intent words excluding generic question frames and stopwords."""
+    norm = normalize_prompt_text(text)
+    words = norm.split()
+    return {w for w in words if w not in QUESTION_STOPWORDS and len(w) > 2}
+
+
+def core_intent_jaccard_similarity(t1: str, t2: str) -> float:
+    """Calculates Jaccard similarity between core intent keywords of two prompts."""
+    c1 = extract_core_intent_tokens(t1)
+    c2 = extract_core_intent_tokens(t2)
+    if not c1 or not c2:
+        return 0.0
+    return len(c1.intersection(c2)) / len(c1.union(c2))
+
+
 class PromptScorer:
     """Deduplicates candidates and computes explainable quality scores."""
 
     SIMILARITY_THRESHOLD: float = 0.82
+    CORE_INTENT_THRESHOLD: float = 0.65
 
     @classmethod
     def deduplicate(
@@ -50,10 +78,13 @@ class PromptScorer:
             if norm in seen_normalized:
                 continue
 
-            # Check near-duplicate Jaccard similarity
+            # Check near-duplicate Jaccard similarity & core semantic intent similarity
             is_near_dup = False
             for prev_norm in seen_normalized:
                 if token_jaccard_similarity(norm, prev_norm) >= cls.SIMILARITY_THRESHOLD:
+                    is_near_dup = True
+                    break
+                if core_intent_jaccard_similarity(norm, prev_norm) >= cls.CORE_INTENT_THRESHOLD:
                     is_near_dup = True
                     break
 

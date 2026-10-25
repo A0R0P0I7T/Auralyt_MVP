@@ -36,3 +36,30 @@ def test_pricing_identity_keeps_units_and_association_distinct():
     per_user = {"plan_name": "Pro", "amount": 8, "currency": "USD", "unit": "user", "billing_basis": "monthly", "associated_product": "App"}
     per_token = {"plan_name": "Pro", "amount": 8, "currency": "USD", "unit": "1M tokens", "billing_basis": "usage", "associated_product": "API"}
     assert canonical_fact_key("pricing", per_user) != canonical_fact_key("pricing", per_token)
+
+
+def test_alembic_migrations_match_all_model_columns(tmp_path, monkeypatch):
+    import sqlite3
+    from alembic import command
+    from alembic.config import Config
+    from app.core.config import settings
+    from app.db.base import Base
+    import app.db.models  # noqa: F401
+
+    db_file = tmp_path / "migrated.db"
+    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite+aiosqlite:///{db_file}")
+
+    cfg = Config("alembic.ini")
+    command.upgrade(cfg, "head")
+
+    conn = sqlite3.connect(db_file)
+    try:
+        for table_name, table in Base.metadata.tables.items():
+            cur = conn.execute(f"PRAGMA table_info({table_name})")
+            db_cols = {row[1] for row in cur.fetchall()}
+            model_cols = {col.name for col in table.columns}
+            missing = model_cols - db_cols
+            assert not missing, f"Table '{table_name}' is missing columns after alembic upgrade head: {missing}"
+    finally:
+        conn.close()
+

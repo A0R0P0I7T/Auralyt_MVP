@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
         from sqlalchemy import text
         for statement in (
             "ALTER TABLE profile_runs ADD COLUMN profile_version INTEGER DEFAULT 1 NOT NULL",
+            "ALTER TABLE profile_runs ADD COLUMN crawl_summary JSON",
             "ALTER TABLE brand_facts ADD COLUMN fact_key VARCHAR(512)",
             "ALTER TABLE brand_facts ADD COLUMN supporting_evidence JSON",
             "ALTER TABLE brand_facts ADD COLUMN is_rejected BOOLEAN DEFAULT 0 NOT NULL",
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
         for statement in (
+            "UPDATE profile_runs SET crawl_summary = '{}' WHERE crawl_summary IS NULL",
             "UPDATE brand_facts SET supporting_evidence = '[]' WHERE supporting_evidence IS NULL",
             "UPDATE visibility_results SET provider_citations = '[]' WHERE provider_citations IS NULL",
             "UPDATE visibility_results SET response_citations = '[]' WHERE response_citations IS NULL",
