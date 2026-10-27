@@ -22,7 +22,7 @@ class CoveragePlanner:
         archetype = classification.domain_archetype
         primary_cat = classification.primary_category or profile.get_primary_category()
 
-        if not primary_cat:
+        if not primary_cat or profile.is_empty:
             raise ValueError(
                 "Cannot create coverage plan: brand profile has insufficient evidence (missing industry, category, products, or use cases). "
                 "Please complete website profiling first."
@@ -40,8 +40,24 @@ class CoveragePlanner:
         if not active_subcats:
             if archetype in ("footwear_apparel", "sportswear_sporting_goods"):
                 active_subcats = ["footwear"]
-            elif archetype in ("developer_infrastructure", "saas_software"):
+            elif archetype == "crm_sales":
+                active_subcats = ["crm_sales"]
+            elif archetype == "marketing_automation":
+                active_subcats = ["marketing_automation"]
+            elif archetype in ("developer_tools", "saas_software"):
                 active_subcats = ["developer_tools"]
+            elif archetype == "fintech":
+                active_subcats = ["fintech"]
+            elif archetype == "healthcare_tech":
+                active_subcats = ["healthcare_tech"]
+            elif archetype == "ecommerce_retail":
+                active_subcats = ["ecommerce_retail"]
+            elif archetype in ("services_professional", "professional_services"):
+                active_subcats = ["professional_services"]
+            elif archetype == "general_business_software":
+                active_subcats = ["general_business_software"]
+            elif archetype == "uncertain_category":
+                active_subcats = ["uncertain_category"]
             else:
                 active_subcats = ["general"]
 

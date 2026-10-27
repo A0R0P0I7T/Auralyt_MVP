@@ -68,6 +68,16 @@ class PromptValidator:
         ):
             return False, "Prompt contains unnatural compound capability dump combining multiple unrelated actions."
 
+        # Tautological category repetition checks (e.g. 'platforms for ... platforms', 'software for ... software')
+        if re.search(r"\b(platforms?|software|tools?|systems?|solutions?)\s+for\s+.*?\b\1\b", lowered):
+            return False, "Prompt contains tautological phrasing (e.g. 'platforms for ... platforms')."
+        if "platforms for b2b" in lowered or "platforms for software platforms" in lowered or "platforms for cloud platforms" in lowered:
+            return False, "Prompt contains tautological category repetition ('platforms for...')."
+
+        # Number agreement checks: e.g. "a modern B2B Software & Cloud platforms?", "a modern ... platforms"
+        if re.search(r"\b(?:a|an)\s+(?:modern|leading|dependable|quality|affordable|reputable|new)?\s*[a-zA-Z0-9\s&]+?\s+platforms\b", lowered):
+            return False, "Prompt contains grammar number agreement flaw (singular article with plural 'platforms')."
+
         # 2b. Domain Archetype Category Locking & Navigation Noise Rejection
         from app.prompts.normalizer import is_navigation_or_ui_noise, UI_NAVIGATION_NOISE_PATTERNS
 
@@ -80,6 +90,17 @@ class PromptValidator:
                 return False, f"Prompt contains navigation/UI noise phrase '{noise}'."
 
         archetype = profile.get_domain_archetype()
+        profile_corpus = f"{profile.industry or ''} {profile.tagline_or_description or ''} {' '.join(profile.products_and_services)} {' '.join(profile.use_cases)}".lower()
+        is_crm_profile = (
+            archetype == "crm_sales"
+            or any(k in profile_corpus for k in ("crm", "sales management", "sales pipeline", "lead prospecting", "outbound sales"))
+        )
+        if is_crm_profile:
+            forbidden_infra = ("cloud gateways", "self-hosted proxies", "sdk quality", "api ergonomics", "backend engineers", "model routing", "kubernetes clusters")
+            for term in forbidden_infra:
+                if term in lowered:
+                    return False, f"Incompatible category mismatch: CRM/sales profile received developer infrastructure question containing '{term}'."
+
         if archetype in ("footwear_apparel", "sportswear_sporting_goods"):
             incompatible_terms = (
                 "software", "api", "database", "saas", "cloud infrastructure", "backend",
@@ -119,7 +140,7 @@ class PromptValidator:
                     if app_word in lowered and any(f in lowered for f in ("cushioning", "arch support", "long distance runs", "high mileage")):
                         return False, f"Category mismatch: footwear feature query combined with apparel product '{app_word}'."
 
-        elif archetype == "developer_infrastructure":
+        elif archetype in ("developer_infrastructure", "developer_tools"):
             footwear_terms = ("sneakers", "running shoes", "footwear", "trainers", "skincare", "cosmetics", "dresses")
             for term in footwear_terms:
                 if re.search(rf"\b{re.escape(term)}\b", lowered):
@@ -148,9 +169,19 @@ class PromptValidator:
 
         clean_prods = profile.get_clean_products()
         if candidate.target_product_service:
+            from app.prompts.classifier import CategoryClassifier
+            classification = CategoryClassifier.classify(profile)
+            allowed_cats = {
+                profile.get_primary_category(),
+                classification.primary_category,
+                profile.industry,
+            }
+            for prods in classification.subcategories.values():
+                allowed_cats.update(prods)
             if (candidate.target_product_service not in profile.products_and_services and
                 candidate.target_product_service not in clean_prods and
-                candidate.target_product_service != profile.get_primary_category()):
+                candidate.target_product_service not in allowed_cats and
+                not any(cat and cat.lower() in candidate.target_product_service.lower() for cat in allowed_cats if cat)):
                 return False, "Prompt references a product outside the active profile."
 
         clean_auds = profile.get_clean_audiences()

@@ -29,7 +29,7 @@ class GeminiModelProvider(AIModelProvider):
     rate limits, connection pooling, and citation extraction from groundingMetadata.
     """
 
-    DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=25.0, write=10.0, pool=5.0)
+    DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=18.0, write=10.0, pool=5.0)
     DEFAULT_LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=30.0)
 
     def __init__(
@@ -40,7 +40,7 @@ class GeminiModelProvider(AIModelProvider):
         client: Optional[httpx.AsyncClient] = None
     ):
         self.api_key = settings.LLM_API_KEY if api_key is None else api_key
-        self._default_model = model or model_name or settings.LLM_MODEL or "gemini-1.5-flash"
+        self._default_model = model or model_name or getattr(settings, "ENGINE3_LLM_MODEL", None) or settings.LLM_MODEL or "gemini-3.5-flash-lite"
         self._client = client
 
     @property
@@ -138,6 +138,31 @@ class GeminiModelProvider(AIModelProvider):
                         retry_after = int(res.headers["retry-after"])
                     except (ValueError, TypeError):
                         pass
+
+                # Inspect Gemini JSON error response for RetryInfo or regex retry-after delay
+                try:
+                    err_json = res.json()
+                    err_obj = err_json.get("error", {})
+                    # 1. Search details array for RetryInfo
+                    for detail in err_obj.get("details", []):
+                        if isinstance(detail, dict) and "retryDelay" in detail:
+                            delay_str = str(detail["retryDelay"])
+                            m = re.search(r"(\d+(?:\.\d+)?)", delay_str)
+                            if m:
+                                retry_after = int(float(m.group(1)) + 1)
+                                break
+                    # 2. Search error message for 'retry after Xs'
+                    if retry_after is None:
+                        msg_text = err_obj.get("message", "") or res.text
+                        m = re.search(r"(?:retry after|retry in|wait)\s*(\d+(?:\.\d+)?)\s*s?", msg_text, re.IGNORECASE)
+                        if m:
+                            retry_after = int(float(m.group(1)) + 1)
+                except Exception:
+                    pass
+
+                # If status is 429 and retry_after was not provided, default to 32 seconds to clear Gemini RPM window
+                if status == 429 and retry_after is None:
+                    retry_after = 32
 
                 resp_metadata: Dict[str, Any] = {"status_code": status}
                 if retry_after is not None:
@@ -255,7 +280,7 @@ class GeminiModelProvider(AIModelProvider):
                 latency_ms=latency,
                 is_success=False,
                 is_retryable=True,
-                error_message="Request to Gemini API timed out after 25 seconds."
+                error_message="Request to Gemini API timed out after 18 seconds."
             )
         except Exception as e:
             latency = int((time.time() - start_time) * 1000)

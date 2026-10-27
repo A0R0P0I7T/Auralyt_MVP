@@ -155,9 +155,10 @@ class ProfilerService:
 
             crawler = ScraplingCrawler(
                 base_url=start_url,
-                page_limit=run.page_limit,
-                max_depth=settings.MAX_CRAWL_DEPTH,
-                on_progress=progress_callback
+                page_limit=1,
+                max_depth=0,
+                on_progress=progress_callback,
+                homepage_only=True
             )
 
             try:

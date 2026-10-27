@@ -429,6 +429,325 @@ CATEGORY_TEMPLATES: Dict[str, Dict[str, Dict[str, List[str]]]] = {
             ],
         },
     },
+    "crm_sales": {
+        "crm_sales": {
+            "discovery": [
+                "What’s a good CRM for a small business?",
+                "What are some of the best CRMs for small businesses right now?",
+                "What are the most popular CRM platforms for growing businesses?",
+                "What solutions exist for managing outbound prospecting and pipeline tracking?",
+                "What are the leading sales intelligence and CRM platforms this year?",
+                "How do modern B2B sales teams handle lead prospecting and outreach?",
+            ],
+            "recommendations": [
+                "Which CRM is easiest for a small business to get started with?",
+                "Which CRM would you recommend for a small business with a limited budget?",
+                "What’s a good all-in-one CRM for a small agency?",
+                "What are the top CRM choices for a local service business?",
+                "Which CRM is worth paying for if you’re a growing team?",
+                "What are some simple CRM options for keeping track of customers?",
+            ],
+            "product_evaluation": [
+                "What criteria should sales leaders evaluate when choosing a modern CRM?",
+                "What features matter most when selecting outbound sales prospecting software?",
+                "How should sales teams evaluate data enrichment accuracy and pipeline tracking?",
+                "What integration capabilities should a sales team verify before committing to a CRM?",
+            ],
+            "comparisons": [
+                "I’m looking for a CRM for my small business. Which ones should I compare?",
+                "What are the main differences between lightweight CRMs and complex enterprise sales suites?",
+                "How do modern outbound sales prospecting platforms compare to traditional CRMs?",
+                "What are the key trade-offs between all-in-one CRM platforms and modular sales tools?",
+            ],
+            "audience_specific": [
+                "Which CRM is good for {audience}?",
+                "What CRM do {audience} usually choose?",
+                "What sales management software is best suited for {audience}?",
+                "What CRM platforms do {audience} recommend for managing client relationships?",
+            ],
+            "use_cases": [
+                "What CRM and sales tools are recommended for {use_case}?",
+                "Which platforms help sales teams streamline {use_case}?",
+                "How do sales teams best handle {use_case} using modern software?",
+            ],
+            "pricing_value": [
+                "What’s an affordable CRM for a small team?",
+                "Can you recommend a CRM for a new business that’s trying to keep costs down?",
+                "What should a company expect to budget for a modern sales CRM?",
+                "Which CRM platforms offer transparent seat and contact pricing?",
+            ],
+            "brand_research": [
+                "What capabilities separate high-velocity sales prospecting platforms from traditional CRMs?",
+                "What are the emerging trends in automated sales workflows and CRM data enrichment?",
+            ],
+        },
+    },
+    "marketing_automation": {
+        "marketing_automation": {
+            "discovery": [
+                "What are the best marketing automation platforms for growing teams?",
+                "What solutions exist for automating email marketing and customer journeys?",
+                "Which marketing automation tools are most popular this year?",
+                "How do modern marketing teams manage customer segmentation and automated campaigns?",
+            ],
+            "recommendations": [
+                "Which marketing automation platform would you recommend for a B2B company?",
+                "What are the top recommended tools for managing automated email campaigns?",
+                "Which marketing tools offer the best balance of automation and ease of use?",
+            ],
+            "product_evaluation": [
+                "What features matter most when evaluating marketing automation software?",
+                "How should teams evaluate email deliverability and segmentation in marketing tools?",
+                "What analytics and attribution features should marketers look for?",
+            ],
+            "comparisons": [
+                "What are the top alternatives and competitors in marketing automation?",
+                "How do leading marketing automation tools compare on ease of setup and deliverability?",
+            ],
+            "audience_specific": [
+                "What marketing automation platforms are best suited for {audience}?",
+                "Which marketing tools do {audience} recommend for growth campaigns?",
+            ],
+            "use_cases": [
+                "Which platforms are best suited for {use_case}?",
+                "What marketing tools help teams streamline {use_case}?",
+            ],
+            "pricing_value": [
+                "Which marketing automation platforms offer transparent contact-based pricing?",
+                "What should a company expect to budget for marketing automation software?",
+            ],
+            "brand_research": [
+                "What capabilities separate modern lifecycle marketing tools from basic email senders?",
+            ],
+        },
+    },
+    "fintech": {
+        "fintech": {
+            "discovery": [
+                "What are the leading modern payment and billing software platforms?",
+                "What solutions exist for automated invoice reconciliation and billing?",
+                "Which fintech platforms are most trusted for online payment processing?",
+            ],
+            "recommendations": [
+                "Which payment gateway would you recommend for a subscription business?",
+                "What are the top recommended tools for automated invoicing and billing?",
+            ],
+            "product_evaluation": [
+                "What security, PCI compliance, and fraud prevention features should businesses evaluate?",
+                "What transaction fee structures and settlement times should businesses compare?",
+            ],
+            "comparisons": [
+                "How do modern subscription billing platforms compare on fee transparency and developer APIs?",
+            ],
+            "audience_specific": [
+                "What billing software is best suited for {audience}?",
+            ],
+            "use_cases": [
+                "What payment platforms are best suited for {use_case}?",
+            ],
+            "pricing_value": [
+                "Which payment platforms offer the most competitive transaction rates?",
+            ],
+            "brand_research": [
+                "What innovations in automated billing and fraud prevention are leading the market?",
+            ],
+        },
+    },
+    "healthcare_tech": {
+        "healthcare_tech": {
+            "discovery": [
+                "What are the leading HIPAA-compliant EHR and practice management platforms?",
+                "What software exists for modern patient scheduling and clinical workflows?",
+            ],
+            "recommendations": [
+                "Which clinical management software would you recommend for a private practice?",
+                "What are the top recommended EHR platforms for clinical teams?",
+            ],
+            "product_evaluation": [
+                "What compliance, HIPAA security, and audit trail capabilities should clinics verify?",
+                "How should healthcare providers evaluate patient portal usability and scheduling?",
+            ],
+            "comparisons": [
+                "What are the key differences between cloud-based EHRs and legacy healthcare software?",
+            ],
+            "audience_specific": [
+                "What practice management software is best suited for {audience}?",
+            ],
+            "use_cases": [
+                "What healthcare software is best suited for {use_case}?",
+            ],
+            "pricing_value": [
+                "What is the standard pricing model for clinical EHR and scheduling software?",
+            ],
+            "brand_research": [
+                "What features distinguish modern interoperable healthcare systems from legacy software?",
+            ],
+        },
+    },
+    "developer_tools": {
+        "developer_tools": {
+            "discovery": [
+                "What are the leading modern platforms for {category}?",
+                "Which developer tools offer the best developer experience for {category}?",
+                "What solutions exist for engineering teams managing {category}?",
+                "What are the top developer tools and APIs for {category}?",
+                "What are the standard developer tools used today for {category}?",
+                "How do engineering teams discover dependable solutions for {category}?",
+            ],
+            "recommendations": [
+                "Which platform would you recommend for teams implementing {category}?",
+                "What infrastructure tools provide the most reliable capabilities for {category}?",
+                "Which developer platforms offer the best latency and throughput for {category}?",
+                "What is a recommended developer-friendly solution for {category}?",
+                "Which tooling for {category} is most popular among backend developers?",
+            ],
+            "product_evaluation": [
+                "What architectural capabilities matter most when evaluating solutions for {category}?",
+                "What latency, uptime, and SLA guarantees should teams look for in {category}?",
+                "How should engineering teams evaluate SDK quality and API ergonomics in {category}?",
+                "What monitoring, rate-limiting, and error-handling features are crucial in {category}?",
+                "What factors should developers check regarding documentation and testing for {category}?",
+            ],
+            "comparisons": [
+                "What are the top alternatives and competitors in {category}?",
+                "How do leading providers in {category} compare on latency, cost, and reliability?",
+                "What are the key differences between managed services and self-hosted tools in {category}?",
+                "How do developers choose between modern API gateways and dedicated routers in {category}?",
+            ],
+            "audience_specific": [
+                "What {category} platforms are best suited for {audience}?",
+                "Which developer tools do {audience} recommend for production environments?",
+                "What tools in {category} best support the requirements of {audience}?",
+                "How do {category} tools handle high-concurrency workloads for {audience}?",
+            ],
+            "use_cases": [
+                "What architecture enables engineering teams to {use_case_base}?",
+                "Which platforms help developer teams streamline {use_case}?",
+                "What are the recommended tools and practices for {use_case} in production?",
+                "How do developers implement reliable fallbacks for {use_case}?",
+            ],
+            "pricing_value": [
+                "Which {category} platforms offer transparent usage-based pricing?",
+                "What should teams expect to budget for a modern {category} platform?",
+                "How do per-request and token pricing tiers compare across {category} tools?",
+                "Which platforms in {category} provide generous free tiers or test credits for developers?",
+            ],
+            "brand_research": [
+                "What key differentiators separate top developer platforms in {category}?",
+                "What technical innovations are advancing modern architectures in {category}?",
+                "Why are engineering teams migrating to next-generation tools in {category}?",
+            ],
+        },
+    },
+    "general_business_software": {
+        "general_business_software": {
+            "discovery": [
+                "What are the best modern software solutions for {category}?",
+                "Which cloud software platforms are leading the market in {category}?",
+                "What solutions exist for streamlining {category}?",
+                "What are popular tools for teams looking to improve {category}?",
+                "What are the top software platforms available today for {category}?",
+                "How do modern businesses approach managing {category}?",
+            ],
+            "recommendations": [
+                "Which software platform would you recommend for growing organizations in {category}?",
+                "What are the top recommended tools for managing {category}?",
+                "What is a reliable, user-friendly platform for {category}?",
+                "Which software solution in {category} offers the best balance of power and simplicity?",
+                "What tools would you suggest for a team standardizing their {category} workflows?",
+                "Which software in {category} is most widely adopted by high-growth companies?",
+            ],
+            "product_evaluation": [
+                "What security, SOC2, and compliance features should teams evaluate in {category} software?",
+                "What features matter most when evaluating enterprise software for {category}?",
+                "What capabilities should product teams prioritize when selecting a {category} tool?",
+                "How do different software architectures impact performance and reliability in {category}?",
+                "What integration support is essential when rolling out a new system for {category}?",
+            ],
+            "comparisons": [
+                "What are the key trade-offs between leading platforms in {category}?",
+                "How do modern next-generation tools in {category} compare to legacy enterprise suites?",
+                "What are the pros and cons of specialized tools versus all-in-one software for {category}?",
+                "When comparing platforms for {category}, what hidden costs or limitations should buyers watch for?",
+                "How do usability and speed differ among top platforms in {category}?",
+            ],
+            "audience_specific": [
+                "What software platforms in {category} are designed for {audience}?",
+                "Which solutions in {category} best support {audience}?",
+                "What tools in {category} do {audience} typically prefer?",
+                "How do solutions in {category} accommodate the specific workflow needs of {audience}?",
+            ],
+            "use_cases": [
+                "Which software platforms are best suited for {use_case}?",
+                "What tools provide the best support when managing {use_case}?",
+                "How can teams optimize {use_case} using modern {category} platforms?",
+                "What are the most effective workflows for {use_case} in {category}?",
+            ],
+            "pricing_value": [
+                "What should organizations expect to budget for modern {category} tools?",
+                "Which software options in {category} offer transparent, scalable pricing?",
+                "What are typical per-user or consumption pricing models in {category}?",
+                "Which tools in {category} deliver the fastest return on investment?",
+            ],
+            "brand_research": [
+                "What capabilities distinguish leading platforms in {category} from legacy software?",
+                "What technical innovations are currently shaping the future of {category}?",
+                "What quality factors separate premium platforms from basic utilities in {category}?",
+                "Why are fast-growing companies switching platforms in {category}?",
+            ],
+        },
+    },
+    "uncertain_category": {
+        "uncertain_category": {
+            "discovery": [
+                "What solutions exist for organizations looking for {category}?",
+                "What are the most reputable providers for {category}?",
+                "What are the top choices for someone getting started in {category}?",
+                "What options are available today for {category}?",
+                "How do organizations typically evaluate available providers in {category}?",
+                "What are the standard approaches to handling {category}?",
+            ],
+            "recommendations": [
+                "Which options in {category} offer the best track record and reliability?",
+                "What would you recommend for someone getting started in {category}?",
+                "Which providers in {category} have the strongest reputation for customer satisfaction?",
+                "What is a dependable solution to consider for {category}?",
+                "Which provider in {category} is known for high service quality and consistency?",
+            ],
+            "product_evaluation": [
+                "What key criteria should someone consider when selecting a solution in {category}?",
+                "What features indicate high quality and reliability in {category}?",
+                "What questions should a buyer ask before choosing a provider in {category}?",
+                "What performance or service benchmarks matter most in {category}?",
+            ],
+            "comparisons": [
+                "How do leading providers in {category} compare in quality and terms?",
+                "What are the main differences between premium and entry-level options in {category}?",
+                "What trade-offs should someone evaluate when comparing choices in {category}?",
+                "How do independent reviews rank the top options in {category}?",
+            ],
+            "audience_specific": [
+                "What solutions in {category} are most effective for {audience}?",
+                "Which providers in {category} cater specifically to {audience}?",
+                "What options in {category} best address the constraints faced by {audience}?",
+            ],
+            "use_cases": [
+                "What solutions are recommended for {use_case}?",
+                "Which options in {category} work best when addressing {use_case}?",
+                "What is the standard approach to solving {use_case} in this category?",
+            ],
+            "pricing_value": [
+                "What should someone expect to pay for dependable solutions in {category}?",
+                "What pricing structures are typical across providers in {category}?",
+                "Which options in {category} provide the best overall value for the cost?",
+            ],
+            "brand_research": [
+                "What quality factors separate high-end options from budget alternatives in {category}?",
+                "What standards distinguish trustworthy providers from unvetted options in {category}?",
+                "What recent trends or changes are affecting buyers in {category}?",
+            ],
+        },
+    },
 }
 
 
@@ -441,27 +760,38 @@ class TemplateRegistry:
         archetype: str,
         subcategory: Optional[str] = None
     ) -> Dict[str, List[str]]:
-        # Map legacy archetype strings to current taxonomy if necessary
         arch_key = archetype
         if archetype in ("footwear_apparel", "sportswear_sporting_goods"):
             arch_key = "sportswear_sporting_goods"
-        elif archetype in ("developer_infrastructure", "saas_software", "enterprise_saas", "creative_tools"):
-            arch_key = "saas_software"
+        elif archetype == "crm_sales":
+            arch_key = "crm_sales"
+        elif archetype == "marketing_automation":
+            arch_key = "marketing_automation"
+        elif archetype == "fintech":
+            arch_key = "fintech"
+        elif archetype == "healthcare_tech":
+            arch_key = "healthcare_tech"
+        elif archetype in ("developer_tools", "developer_infrastructure"):
+            arch_key = "developer_tools"
+        elif archetype in ("saas_software",):
+            if subcategory == "developer_tools":
+                arch_key = "developer_tools"
+            else:
+                arch_key = "general_business_software"
+        elif archetype == "general_business_software":
+            arch_key = "general_business_software"
+        elif archetype == "uncertain_category":
+            arch_key = "uncertain_category"
+        elif archetype in ("enterprise_saas", "creative_tools"):
+            arch_key = "developer_tools"
         elif archetype in ("ecommerce_retail", "consumer_ecommerce"):
             arch_key = "ecommerce_retail"
-        elif archetype in ("services_professional",):
+        elif archetype in ("services_professional", "professional_services"):
             arch_key = "services_professional"
 
         arch_dict = CATEGORY_TEMPLATES.get(arch_key, CATEGORY_TEMPLATES.get(archetype, CATEGORY_TEMPLATES["general"]))
-        if subcategory:
-            if subcategory in arch_dict:
-                return arch_dict[subcategory]
-            if subcategory in ("software_tool", "developer_tools", "cloud_service"):
-                if "developer_tools" in arch_dict:
-                    return arch_dict["developer_tools"]
-            if subcategory in ("footwear", "apparel", "equipment_gear"):
-                if subcategory in arch_dict:
-                    return arch_dict[subcategory]
+        if subcategory and subcategory in arch_dict:
+            return arch_dict[subcategory]
         if "general" in arch_dict:
             return arch_dict["general"]
         first_sub = next(iter(arch_dict.values()))

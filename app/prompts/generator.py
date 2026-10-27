@@ -446,8 +446,9 @@ class DeterministicGenerator(PromptGeneratorProvider):
         classification = CategoryClassifier.classify(profile)
         archetype = classification.domain_archetype or profile.get_domain_archetype()
 
+        from app.prompts.normalizer import humanize_category_or_industry
         category = classification.primary_category or profile.get_primary_category() or "solutions in this field"
-        clean_category = profile.clean_text_of_brand(category) or "solutions in this field"
+        clean_category = humanize_category_or_industry(profile.clean_text_of_brand(category)) or "solutions in this field"
         clean_subcategories = profile.get_clean_subcategories()
         market_name = profile.target_market or "global markets"
 
@@ -491,14 +492,41 @@ class DeterministicGenerator(PromptGeneratorProvider):
             if not audience_val:
                 audience_val = "runners" if slot_archetype in ("footwear_apparel", "sportswear_sporting_goods") else "teams"
 
-            raw_use_case = slot.dimension_value if slot.target_dimension == "use_case" else (
-                clean_use_cases[0] if clean_use_cases else f"evaluating {clean_category}"
-            )
-            use_case_val = profile.clean_text_of_brand(str(raw_use_case)).strip("\"'").strip() if raw_use_case else f"evaluating {clean_category}"
+            if slot.target_dimension == "use_case" and slot.dimension_value:
+                raw_use_case = slot.dimension_value
+            elif clean_use_cases:
+                raw_use_case = clean_use_cases[idx % len(clean_use_cases)]
+            elif slot_archetype == "saas_software":
+                fallback_use_cases = [
+                    "scaling outbound prospecting",
+                    "automating sales workflows",
+                    "enriching CRM lead data",
+                    "waterfall contact enrichment",
+                    "streamlining go-to-market operations"
+                ]
+                raw_use_case = fallback_use_cases[idx % len(fallback_use_cases)]
+            elif slot_archetype in ("footwear_apparel", "sportswear_sporting_goods"):
+                fallback_use_cases = [
+                    "marathon training",
+                    "daily road running",
+                    "half marathon preparation",
+                    "long-distance training",
+                    "tempo runs"
+                ]
+                raw_use_case = fallback_use_cases[idx % len(fallback_use_cases)]
+            else:
+                fallback_use_cases = [
+                    "improving operational efficiency",
+                    "streamlining core workflows",
+                    "scaling daily operations"
+                ]
+                raw_use_case = fallback_use_cases[idx % len(fallback_use_cases)]
+
+            use_case_val = profile.clean_text_of_brand(str(raw_use_case)).strip("\"'").strip() if raw_use_case else ""
             if use_case_val.lower().startswith("to "):
                 use_case_val = use_case_val[3:].strip().strip("\"'").strip()
             if not use_case_val:
-                use_case_val = f"evaluating {clean_category}"
+                use_case_val = "streamlining core workflows"
             use_case_base, use_case_gerund = normalize_use_case_forms(use_case_val)
 
             raw_pricing = slot.dimension_value if slot.target_dimension == "pricing" else (
@@ -526,10 +554,23 @@ class DeterministicGenerator(PromptGeneratorProvider):
                     prompt_cat = "athletic apparel"
                 elif slot_subcat == "equipment_gear":
                     prompt_cat = "training gear and equipment"
-                elif slot_subcat == "developer_tools":
-                    prompt_cat = clean_subcategories[idx % len(clean_subcategories)] if clean_subcategories else (clean_category or "developer tools")
+                elif slot_subcat == "crm_sales" or slot_archetype == "crm_sales":
+                    prompt_cat = "CRM software"
+                elif slot_subcat == "marketing_automation" or slot_archetype == "marketing_automation":
+                    prompt_cat = "marketing automation software"
+                elif slot_subcat == "fintech" or slot_archetype == "fintech":
+                    prompt_cat = "fintech software"
+                elif slot_subcat == "healthcare_tech" or slot_archetype == "healthcare_tech":
+                    prompt_cat = "healthcare practice software"
+                elif slot_subcat == "developer_tools" or slot_archetype == "developer_tools":
+                    prompt_cat = "developer tools and APIs"
+                elif slot_subcat == "general_business_software" or slot_archetype == "general_business_software":
+                    prompt_cat = "business software"
+                elif slot_subcat == "uncertain_category" or slot_archetype == "uncertain_category":
+                    prompt_cat = "software solutions"
                 else:
-                    prompt_cat = clean_subcategories[idx % len(clean_subcategories)] if clean_subcategories else clean_category
+                    from app.prompts.normalizer import get_natural_category_phrase
+                    prompt_cat = get_natural_category_phrase(clean_category, slot_archetype)
 
                 prompt_text = template.format(
                     brand=prompt_cat,
@@ -548,6 +589,15 @@ class DeterministicGenerator(PromptGeneratorProvider):
 
             # Final sanity clean to guarantee zero brand mentions
             prompt_text = profile.clean_text_of_brand(prompt_text)
+            # Remove duplicated trailing nouns e.g. "Platforms platform" -> "Platforms"
+            prompt_text = re.sub(r"\b(platforms?|software|tools?|solutions?)\s+\1\b", r"\1", prompt_text, flags=re.IGNORECASE)
+            prompt_text = re.sub(r"\bplatforms\s+platform\b", "platforms", prompt_text, flags=re.IGNORECASE)
+            prompt_text = re.sub(r"\bsoftware\s+software\b", "software", prompt_text, flags=re.IGNORECASE)
+            # Clean awkward B2B Software & Cloud Platforms artifacts
+            prompt_text = re.sub(r"\bplatforms for B2B Software & Cloud Platforms\b", "platforms for business software", prompt_text, flags=re.IGNORECASE)
+            prompt_text = re.sub(r"\bB2B Software & Cloud Platforms\b", "business software", prompt_text, flags=re.IGNORECASE)
+            prompt_text = re.sub(r"\ba\s+modern\s+([A-Za-z\s&]+?)\s+platforms\b", r"a modern \1 platform", prompt_text, flags=re.IGNORECASE)
+            prompt_text = re.sub(r"\bplatforms for ([A-Za-z\s]+?)\s+platforms\b", r"platforms for \1", prompt_text, flags=re.IGNORECASE)
             if not prompt_text.endswith("?"):
                 prompt_text = prompt_text.rstrip(".") + "?"
 
@@ -592,6 +642,7 @@ class DeterministicGenerator(PromptGeneratorProvider):
                 scores={},
                 quality_score=1.0,
                 is_approved=False,
+                lifecycle_status="proposed",
                 template_version=TemplateRegistry.get_template_version()
             )
             candidates.append(cand)
@@ -715,8 +766,9 @@ class GeminiGenerator(PromptGeneratorProvider):
         return await self.fallback.generate(profile, plan)
 
 
-def get_prompt_generator() -> PromptGeneratorProvider:
+def get_prompt_generator(provider: Optional[str] = None) -> PromptGeneratorProvider:
     """Factory for selecting the active prompt generator provider."""
-    if settings.LLM_ENABLED and settings.LLM_PROVIDER.lower() == "gemini":
+    selected = (provider or ("gemini" if settings.LLM_ENABLED else "deterministic")).lower()
+    if selected == "gemini":
         return GeminiGenerator()
     return DeterministicGenerator()

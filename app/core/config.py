@@ -72,7 +72,8 @@ class Settings(BaseSettings):
     LLM_ENABLED: bool = False
     LLM_PROVIDER: str = "gemini"
     LLM_API_KEY: Optional[str] = None
-    LLM_MODEL: str = "gemini-1.5-flash"
+    LLM_MODEL: str = "gemini-3.1-flash-lite"
+    ENGINE3_LLM_MODEL: str = Field(default="gemini-3.5-flash-lite", description="Evaluation model for Engine 3")
 
     # Authentication & Multi-Tenancy
     AUTH_ENABLED: bool = True

@@ -310,5 +310,6 @@ class GeneratedPromptCandidate(BaseModel):
     scores: Dict[str, float] = {}
     quality_score: float = 1.0
     is_approved: bool = False
+    lifecycle_status: str = "proposed"  # generated -> validated -> proposed -> approved/rejected -> tracked
     rejection_reason: Optional[str] = None
     template_version: Optional[str] = None

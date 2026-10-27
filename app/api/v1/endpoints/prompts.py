@@ -11,6 +11,8 @@ from app.schemas.prompt import (
     PromptRunResponse,
     PromptCandidateResponse,
     PromptUpdateRequest,
+    PromptReviewRequest,
+    PromptBatchReviewRequest,
     PromptListResponse,
     PromptCoverageSummary,
 )
@@ -105,6 +107,7 @@ async def list_brand_prompts(
     category: Optional[str] = Query(None, description="Filter by category"),
     intent: Optional[str] = Query(None, description="Filter by search intent"),
     is_approved: Optional[bool] = Query(None, description="Filter by approval status"),
+    lifecycle_status: Optional[str] = Query(None, description="Filter by lifecycle status"),
     is_archived: bool = Query(False, description="Filter archived prompts"),
     search: Optional[str] = Query(None, description="Search prompt text"),
     profile_version: Optional[int] = Query(None, description="Filter by specific profile version"),
@@ -122,6 +125,7 @@ async def list_brand_prompts(
             category=category,
             intent=intent,
             is_approved=is_approved,
+            lifecycle_status=lifecycle_status,
             is_archived=is_archived,
             search=search,
             profile_version=profile_version,
@@ -206,5 +210,61 @@ async def update_prompt(
             db=db
         )
         return updated
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
+@router.put(
+    "/brands/{brand_id}/prompts/{prompt_id}/review",
+    response_model=PromptCandidateResponse,
+    summary="Review a prompt: approve, reject, edit text, or add notes"
+)
+async def review_prompt(
+    brand_id: str,
+    prompt_id: str,
+    payload: PromptReviewRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db)
+):
+    await verify_brand_access(brand_id, db, current_org)
+
+    try:
+        updated = await PromptIntelligenceService.review_prompt(
+            brand_id=brand_id,
+            prompt_id=prompt_id,
+            lifecycle_status=payload.lifecycle_status,
+            text=payload.text,
+            review_notes=payload.review_notes,
+            db=db
+        )
+        return updated
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
+@router.post(
+    "/brands/{brand_id}/prompts/batch-review",
+    response_model=List[PromptCandidateResponse],
+    summary="Batch review multiple prompts for a brand"
+)
+async def batch_review_prompts(
+    brand_id: str,
+    payload: PromptBatchReviewRequest,
+    current_user: User = Depends(get_current_user),
+    current_org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db)
+):
+    await verify_brand_access(brand_id, db, current_org)
+
+    try:
+        updated_list = await PromptIntelligenceService.batch_review_prompts(
+            brand_id=brand_id,
+            prompt_ids=payload.prompt_ids,
+            lifecycle_status=payload.lifecycle_status,
+            review_notes=payload.review_notes,
+            db=db
+        )
+        return updated_list
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))

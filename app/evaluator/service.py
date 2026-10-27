@@ -41,9 +41,68 @@ def get_provider_semaphore(provider_name: str, concurrency: Optional[int] = None
         loop_id = 0
     key = (loop_id, provider_name)
     if key not in _GLOBAL_PROVIDER_SEMAPHORES:
-        limit = concurrency or (3 if provider_name == "gemini" else 10)
+        limit = concurrency or (2 if provider_name == "gemini" else 10)
         _GLOBAL_PROVIDER_SEMAPHORES[key] = asyncio.Semaphore(limit)
     return _GLOBAL_PROVIDER_SEMAPHORES[key]
+
+
+class ProviderRateLimiter:
+    """
+    Sliding-window async rate limiter that prevents provider quota exhaustion (e.g. 15 RPM for Gemini free tier).
+    Enforces <= 12 RPM (at least 5.0s min interval) shared across all concurrent workers.
+    """
+    def __init__(self, max_requests: int = 12, window_seconds: float = 60.0, min_interval: float = 5.0):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.min_interval = min_interval
+        self._timestamps: List[float] = []
+        self._last_dispatch: float = 0.0
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            while True:
+                now = time.time()
+                # Purge timestamps outside sliding window
+                cutoff = now - self.window_seconds
+                self._timestamps = [t for t in self._timestamps if t > cutoff]
+
+                # Minimum interval between consecutive request starts
+                interval_wait = (self._last_dispatch + self.min_interval) - now
+
+                # Window capacity wait (RPM ceiling)
+                capacity_wait = 0.0
+                if len(self._timestamps) >= self.max_requests:
+                    oldest = self._timestamps[0]
+                    capacity_wait = (oldest + self.window_seconds + 0.5) - now
+
+                wait_time = max(interval_wait, capacity_wait)
+                if wait_time > 0:
+                    await asyncio.sleep(min(wait_time, 60.0))
+                else:
+                    now = time.time()
+                    self._timestamps.append(now)
+                    self._last_dispatch = now
+                    break
+
+
+_GLOBAL_PROVIDER_RATE_LIMITERS: Dict[Tuple[int, str], ProviderRateLimiter] = {}
+
+
+def get_provider_rate_limiter(provider_name: str) -> Optional[ProviderRateLimiter]:
+    """Return shared rate limiter for provider bound to active event loop."""
+    if (provider_name or "").lower() != "gemini":
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+    except RuntimeError:
+        loop_id = 0
+    key = (loop_id, provider_name.lower())
+    if key not in _GLOBAL_PROVIDER_RATE_LIMITERS:
+        # Enforce 12 requests per 60 seconds (safely under Gemini 15 RPM free tier), with 5.0s min interval
+        _GLOBAL_PROVIDER_RATE_LIMITERS[key] = ProviderRateLimiter(max_requests=12, window_seconds=60.0, min_interval=5.0)
+    return _GLOBAL_PROVIDER_RATE_LIMITERS[key]
 
 
 class VisibilityEvaluatorService:
@@ -170,12 +229,14 @@ class VisibilityEvaluatorService:
                 stmt = select(PromptCandidate).where(
                     PromptCandidate.prompt_run_id == latest_run.id,
                     PromptCandidate.is_approved.is_(True),
+                    PromptCandidate.lifecycle_status.in_(("approved", "tracked")),
                     PromptCandidate.is_archived.is_(False)
                 ).order_by(desc(PromptCandidate.quality_score))
             else:
                 version_stmt = select(PromptCandidate.profile_version).where(
                     PromptCandidate.brand_id == brand_id,
                     PromptCandidate.is_approved.is_(True),
+                    PromptCandidate.lifecycle_status.in_(("approved", "tracked")),
                     PromptCandidate.is_archived.is_(False),
                 ).order_by(PromptCandidate.profile_version.desc(), PromptCandidate.created_at.desc()).limit(1)
                 version_res = await db.execute(version_stmt)
@@ -188,6 +249,7 @@ class VisibilityEvaluatorService:
                     PromptCandidate.brand_id == brand_id,
                     PromptCandidate.profile_version == scan_version,
                     PromptCandidate.is_approved.is_(True),
+                    PromptCandidate.lifecycle_status.in_(("approved", "tracked")),
                     PromptCandidate.is_archived.is_(False)
                 ).order_by(desc(PromptCandidate.quality_score))
 
@@ -218,6 +280,117 @@ class VisibilityEvaluatorService:
             if not selected_prompts:
                 raise ValueError("No valid approved prompts selected for scan.")
 
+            # ── Quality Gate: validate Engine 2 prompts before Engine 3 dispatch ──
+            from app.prompts.quality_gate import QualityGate
+            from app.prompts.scorer import normalize_prompt_text as _npt
+            from collections import Counter
+
+            # Determine brand's primary category from prompts or brand profile
+            known_cats = {"crm", "ai_assistants", "clothing", "footwear", "skincare"}
+            brand_primary_category = None
+            for p in selected_prompts:
+                if p.category and p.category.lower() in known_cats:
+                    brand_primary_category = p.category.lower()
+                    break
+            if not brand_primary_category:
+                ind = (brand.industry or "").lower()
+                name = (brand.business_name or "").lower()
+                if any(k in ind or k in name for k in ("ai", "artificial intelligence", "assistant", "bot", "aurora")):
+                    brand_primary_category = "ai_assistants"
+                elif any(k in ind or k in name for k in ("shoe", "footwear", "sneaker", "running", "nike")):
+                    brand_primary_category = "footwear"
+                elif any(k in ind or k in name for k in ("cloth", "apparel", "fashion", "garment", "hm", "h&m")):
+                    brand_primary_category = "clothing"
+                elif any(k in ind or k in name for k in ("skin", "beauty", "cosmetic", "derma", "vaseline")):
+                    brand_primary_category = "skincare"
+                else:
+                    brand_primary_category = "crm"
+
+            if prompt_ids:
+                # Explicit prompt_ids were requested by the caller; keep the exact selected prompts
+                final_prompt_objects = selected_prompts
+                gate_stats = {
+                    "total_evaluated": len(selected_prompts),
+                    "generated_passed": len(selected_prompts),
+                    "rejected_count": 0,
+                    "fallback_count": 0,
+                    "shortfall": 0,
+                    "generated_pass_rate": 1.0,
+                    "fallback_rate": 0.0,
+                }
+            else:
+                gate = QualityGate(
+                    brand_category=brand_primary_category,
+                    brand_name=brand.business_name,
+                    brand_domain=brand.domain,
+                )
+
+                prompt_dicts = [
+                    {
+                        "id": p.id,
+                        "text": p.text,
+                        "category": p.category,
+                        "intent": p.intent,
+                        "quality_score": p.quality_score,
+                        "is_approved": p.is_approved,
+                        "target_product_service": p.target_product_service,
+                        "target_audience": p.target_audience,
+                    }
+                    for p in selected_prompts
+                ]
+
+                gate_results = gate.evaluate_batch(prompt_dicts, target_count=len(selected_prompts))
+                gate_stats = gate.get_stats()
+
+                # Build final prompt list: keep passed originals, persist gold-fallback PromptCandidates
+                final_prompt_objects = []
+                passed_original_ids = {r["original_id"] for r in gate_results if r["accepted"] and r["provenance"] == "generated"}
+                for p in selected_prompts:
+                    if p.id in passed_original_ids:
+                        final_prompt_objects.append(p)
+
+                # Persist gold-fallback prompts as PromptCandidate records
+                gold_fallbacks = [r for r in gate_results if r["accepted"] and r["provenance"] == "gold_fallback"]
+                for fb in gold_fallbacks:
+                    fb_model = PromptCandidate(
+                        brand_id=brand.id,
+                        prompt_run_id=latest_run.id if latest_run else selected_prompts[0].prompt_run_id,
+                        profile_version=scan_version,
+                        text=fb["text"],
+                        normalized_text=_npt(fb["text"]),
+                        category=fb.get("category", brand_primary_category),
+                        intent=fb.get("intent", "broad_recommendation"),
+                        buying_stage="consideration",
+                        language="en",
+                        provenance_fact_ids=[],
+                        grounding_evidence=[],
+                        scores={
+                            "provenance": "gold_fallback",
+                            "gold_id": fb["gold_id"],
+                            "quality_gate_source": "auralyt_engine2_prompt_quality_gold.json",
+                        },
+                        quality_score=0.9,
+                        is_approved=True,
+                        lifecycle_status="approved",
+                        review_notes=f"Gold fallback (ID: {fb['gold_id']}): replaces rejected Engine 2 candidate",
+                        is_archived=False,
+                        user_edited=False,
+                        edit_history=[],
+                    )
+                    db.add(fb_model)
+                    final_prompt_objects.append(fb_model)
+
+                if gold_fallbacks:
+                    await db.commit()
+                    for fb_obj in final_prompt_objects:
+                        try:
+                            await db.refresh(fb_obj)
+                        except Exception:
+                            pass
+
+            if not final_prompt_objects:
+                raise ValueError("Quality gate rejected all prompts and no gold fallbacks were available.")
+
             # Resolve active provider adapter
             active_provider = get_evaluator_provider(provider)
             selected_model = model_name or active_provider.default_model
@@ -229,13 +402,24 @@ class VisibilityEvaluatorService:
                 status="pending",
                 provider=active_provider.provider_name,
                 model_name=selected_model,
-                prompts_selected=len(selected_prompts),
+                prompts_selected=len(final_prompt_objects),
                 prompts_completed=0,
                 prompts_failed=0,
                 config_metadata={
-                    "prompt_ids": [p.id for p in selected_prompts],
+                    "prompt_ids": [p.id for p in final_prompt_objects],
                     "force_rescan": force_rescan,
-                    "provider_mode": active_provider.provider_name
+                    "provider_mode": active_provider.provider_name,
+                    "quality_gate": {
+                        "enabled": True,
+                        "brand_category": brand_primary_category,
+                        "total_evaluated": gate_stats["total_evaluated"],
+                        "generated_passed": gate_stats["generated_passed"],
+                        "rejected_count": gate_stats["rejected_count"],
+                        "fallback_count": gate_stats["fallback_count"],
+                        "shortfall": gate_stats["shortfall"],
+                        "generated_pass_rate": gate_stats["generated_pass_rate"],
+                        "fallback_rate": gate_stats["fallback_rate"],
+                    }
                 }
             )
             db.add(scan)
@@ -317,6 +501,7 @@ class VisibilityEvaluatorService:
 
             provider = get_evaluator_provider(scan.provider)
             semaphore = get_provider_semaphore(scan.provider)
+            rate_limiter = get_provider_rate_limiter(scan.provider)
 
             # Reusable pooled client if provider supports it
             shared_client = None
@@ -328,68 +513,114 @@ class VisibilityEvaluatorService:
             try:
                 if prompts_to_evaluate:
                     async def process_prompt(prompt_obj: PromptCandidate) -> Tuple[PromptCandidate, ProviderResponse, Optional[EvaluationResult]]:
-                        async with semaphore:
-                            max_attempts = 3
-                            last_resp: Optional[ProviderResponse] = None
+                        max_attempts = 3
+                        last_resp: Optional[ProviderResponse] = None
 
-                            for attempt in range(max_attempts):
-                                try:
+                        for attempt in range(max_attempts):
+                            # 1. Pacing rate limit check (enforces sliding window <= 12 RPM for Gemini across all workers)
+                            # Applied to every attempt (initial and retries) to strictly govern combined starts across workers
+                            if rate_limiter:
+                                await rate_limiter.acquire()
+
+                            resp: Optional[ProviderResponse] = None
+                            try:
+                                # 2. Acquire semaphore ONLY for network call (never while sleeping on retries)
+                                async with semaphore:
                                     query_kwargs = {"client": shared_client} if shared_client is not None else {}
                                     try:
-                                        resp = await provider.query(
+                                        query_coro = provider.query(
                                             prompt=prompt_obj.text,
                                             model_name=scan.model_name,
                                             **query_kwargs
                                         )
                                     except TypeError:
-                                        resp = await provider.query(
+                                        query_coro = provider.query(
                                             prompt=prompt_obj.text,
                                             model_name=scan.model_name
                                         )
-                                    last_resp = resp
-                                    if resp.is_success and resp.text.strip():
-                                        provider_metadata = dict(resp.metadata or {})
-                                        if resp.grounding_citations:
-                                            provider_metadata["grounding_citations"] = list(resp.grounding_citations)
-                                        resp.metadata = provider_metadata
-                                        eval_res = VisibilityResponseEvaluator.evaluate(
-                                            response_text=resp.text,
-                                            brand_name=brand.business_name,
-                                            brand_domain=brand.domain,
-                                            known_competitors=None,
-                                            provider_metadata=provider_metadata
-                                        )
-                                        return prompt_obj, resp, eval_res
-                                    else:
-                                        if not resp.is_retryable:
-                                            break
-                                        if attempt < max_attempts - 1:
-                                            retry_after = (resp.metadata or {}).get("retry_after")
-                                            if retry_after is not None and 0 < retry_after <= 15:
-                                                delay = float(retry_after)
-                                            else:
-                                                base_delay = 1.5 * (2 ** attempt)
-                                                jitter = random.uniform(0.1, 0.4)
-                                                delay = min(base_delay + jitter, 10.0)
-                                            await asyncio.sleep(delay)
-                                except Exception as e:
-                                    logger.warning(f"Error querying provider on attempt {attempt+1}: {e}")
-                                    if attempt < max_attempts - 1:
-                                        await asyncio.sleep(min(1.0 * (2 ** attempt), 5.0))
-
-                            if last_resp is None:
+                                    # Enforce a bounded per-prompt timeout so hanging queries fail fast
+                                    resp = await asyncio.wait_for(query_coro, timeout=22.0)
+                                last_resp = resp
+                            except asyncio.TimeoutError:
+                                logger.warning(f"Query timed out for prompt '{prompt_obj.id[:8]}' on attempt {attempt+1}")
                                 last_resp = ProviderResponse(
                                     text="",
                                     provider=scan.provider,
                                     model_name=scan.model_name,
                                     is_success=False,
-                                    is_retryable=False,
-                                    error_message="All retry attempts failed to query provider."
+                                    is_retryable=True,
+                                    error_message="Query timed out after 22 seconds.",
+                                    metadata={"status_code": 408, "timed_out": True}
                                 )
-                            return prompt_obj, last_resp, None
+                                resp = last_resp
+                            except Exception as e:
+                                logger.warning(f"Error querying provider on attempt {attempt+1}: {e}")
+                                last_resp = ProviderResponse(
+                                    text="",
+                                    provider=scan.provider,
+                                    model_name=scan.model_name,
+                                    is_success=False,
+                                    is_retryable=True,
+                                    error_message=str(e)
+                                )
+                                resp = last_resp
+
+                            if resp and resp.is_success and resp.text.strip():
+                                provider_metadata = dict(resp.metadata or {})
+                                if resp.grounding_citations:
+                                    provider_metadata["grounding_citations"] = list(resp.grounding_citations)
+                                resp.metadata = provider_metadata
+                                eval_res = VisibilityResponseEvaluator.evaluate(
+                                    response_text=resp.text,
+                                    brand_name=brand.business_name,
+                                    brand_domain=brand.domain,
+                                    known_competitors=None,
+                                    provider_metadata=provider_metadata
+                                )
+                                return prompt_obj, resp, eval_res
+                            else:
+                                if resp and not resp.is_retryable:
+                                    break
+                                if attempt < max_attempts - 1:
+                                    retry_after = (resp.metadata or {}).get("retry_after") if resp else None
+                                    status_code = getattr(resp, "metadata", {}).get("status_code")
+                                    is_429 = status_code == 429
+                                    is_503 = status_code in (500, 502, 503, 504)
+                                    is_timeout = getattr(resp, "metadata", {}).get("timed_out") or "timed out" in (getattr(resp, "error_message", "") or "").lower()
+
+                                    # Bound timeout retries: allow max 1 retry for timeouts to prevent queue stalling
+                                    if is_timeout and attempt >= 1:
+                                        break
+
+                                    if retry_after is not None and 0 < retry_after <= 60:
+                                        delay = min(float(retry_after), 35.0) + random.uniform(0.5, 1.5)
+                                    elif is_429:
+                                        delay = 14.0 + random.uniform(1.0, 3.0)
+                                    elif is_503:
+                                        # Bounded exponential backoff with jitter for transient service overloads
+                                        delay = min(3.0 * (2 ** attempt) + random.uniform(0.5, 2.0), 12.0)
+                                    elif is_timeout:
+                                        delay = 4.0 + random.uniform(0.5, 1.5)
+                                    else:
+                                        base_delay = 1.5 * (2 ** attempt)
+                                        jitter = random.uniform(0.2, 0.5)
+                                        delay = min(base_delay + jitter, 5.0)
+                                    logger.info(f"Retrying prompt '{prompt_obj.id[:8]}' after {delay:.1f}s delay (attempt {attempt+1}/{max_attempts}, status={status_code})")
+                                    await asyncio.sleep(delay)
+
+                        if last_resp is None:
+                            last_resp = ProviderResponse(
+                                text="",
+                                provider=scan.provider,
+                                model_name=scan.model_name,
+                                is_success=False,
+                                is_retryable=False,
+                                error_message="All retry attempts failed to query provider."
+                            )
+                        return prompt_obj, last_resp, None
 
                     # Execution loop with overall deadline and real-time incremental persistence
-                    deadline = scan_timeout_seconds or 180.0
+                    deadline = scan_timeout_seconds or max(240.0, len(prompts_to_evaluate) * 15.0)
                     pending_tasks = {
                         asyncio.create_task(process_prompt(p)): p for p in prompts_to_evaluate
                     }
@@ -400,8 +631,6 @@ class VisibilityEvaluatorService:
                         if remaining <= 0:
                             timed_out = True
                             logger.warning(f"Scan '{scan.id}' exceeded deadline of {deadline}s")
-                            for t in pending_tasks:
-                                t.cancel()
                             break
 
                         done, _ = await asyncio.wait(
@@ -413,8 +642,6 @@ class VisibilityEvaluatorService:
                         if not done:
                             if time.time() - start_time >= deadline:
                                 timed_out = True
-                                for t in pending_tasks:
-                                    t.cancel()
                                 break
                             continue
 
@@ -508,6 +735,43 @@ class VisibilityEvaluatorService:
                             scan.prompts_completed = completed_count
                             scan.prompts_failed = failed_count
                             await db.commit()
+
+                    # Reconcile any remaining pending tasks that timed out at scan deadline
+                    if pending_tasks:
+                        logger.warning(
+                            f"Scan '{scan.id}' has {len(pending_tasks)} uncompleted tasks at deadline. "
+                            f"Persisting terminal timeout records for reconciliation."
+                        )
+                        for task, p_orig in list(pending_tasks.items()):
+                            task.cancel()
+                            failed_count += 1
+                            vis_res = VisibilityResult(
+                                scan_id=scan.id,
+                                brand_id=brand.id,
+                                prompt_id=p_orig.id,
+                                prompt_text=p_orig.text,
+                                provider=scan.provider,
+                                model_name=scan.model_name,
+                                execution_status="timeout",
+                                raw_response_text="",
+                                raw_response_metadata={"status_code": 408, "timed_out": True},
+                                latency_ms=int((time.time() - start_time) * 1000),
+                                error_details=f"Evaluation timed out: scan deadline of {deadline:.1f}s exceeded before query completed.",
+                                brand_mentioned=False,
+                                mention_context=None,
+                                recommendation_status="unknown",
+                                competitor_mentions=[],
+                                comparative_position="unknown",
+                                citations=[],
+                                evaluation_reasoning="Evaluation timed out before model response was received."
+                            )
+                            db.add(vis_res)
+                            results_to_persist.append(vis_res)
+
+                        pending_tasks.clear()
+                        scan.prompts_completed = completed_count
+                        scan.prompts_failed = failed_count
+                        await db.commit()
 
             finally:
                 if shared_client and hasattr(shared_client, "aclose"):

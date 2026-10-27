@@ -142,18 +142,47 @@ class CategoryClassifier:
             "outdoor equipment", "camping", "hiking", "trail running"
         )) or (len(subcategories["footwear"]) > 0 and (len(subcategories["apparel"]) > 0 or len(subcategories["equipment_gear"]) > 0))
 
-        is_developer_or_software = any(k in corpus for k in (
-            "developer tools", "cloud infrastructure", "api gateway", "model routing",
-            "llm api", "hosting platform", "database", "devops", "kubernetes",
-            "b2b saas", "crm", "project management", "workflow automation", "workflow optimization",
-            "openrouter", "artificial intelligence", "machine learning", "ai platform",
-            "agent orchestration", "software", "saas", "developer"
-        )) or (len(subcategories["software_tool"]) > 0 and len(subcategories["footwear"]) == 0 and len(subcategories["apparel"]) == 0)
+        is_crm = any(k in corpus for k in (
+            "crm", "sales pipeline", "lead management", "lead prospecting", "prospecting",
+            "pipeline management", "sales intelligence", "sales automation", "revops",
+            "waterfall enrichment", "outbound sales", "outbound outreach", "cold outreach",
+            "close more deals", "sales play", "sales plays", "sales workflow"
+        ))
 
-        is_service_business = any(k in corpus for k in (
-            "consulting firm", "financial advisory", "legal services", "healthcare provider",
-            "marketing agency", "logistics services", "medical practice"
-        )) or (len(subcategories["professional_service"]) > 0 and len(subcategories["footwear"]) == 0 and len(subcategories["software_tool"]) == 0)
+        is_developer = any(k in corpus for k in (
+            "developer tools", "cloud infrastructure", "api gateway", "model routing",
+            "llm api", "sdk toolkit", "api routing", "latency optimization", "backend engineering",
+            "devops", "kubernetes", "database engine", "api ergonomics", "developer experience",
+            "openrouter"
+        ))
+
+        is_marketing = any(k in corpus for k in (
+            "marketing automation", "email campaigns", "customer segmentation",
+            "newsletter analytics", "email marketing", "inbound marketing", "campaign management"
+        ))
+
+        is_fintech = any(k in corpus for k in (
+            "fintech", "financialservice", "financial software", "payment gateway",
+            "automated billing", "invoice reconciliation", "payment processing",
+            "merchant processing", "subscription billing", "automated invoicing"
+        ))
+
+        is_healthcare = any(k in corpus for k in (
+            "medicalorganization", "healthcare", "hipaa", "ehr", "patient scheduling",
+            "clinical practice", "clinical records", "telehealth", "medical practice",
+            "healthcare technology"
+        ))
+
+        is_professional_service = any(k in corpus for k in (
+            "consulting firm", "advisory services", "management consulting",
+            "professional services", "legal services", "client services",
+            "financial advisory", "logistics services"
+        ))
+
+        is_retail_ecommerce = any(k in corpus for k in (
+            "ecommerce", "online store", "shopping cart", "retail store",
+            "consumer goods", "online shopping", "merchandise"
+        ))
 
         # Confidence calculation
         confidence = 0.5
@@ -180,40 +209,84 @@ class CategoryClassifier:
                 secondary_categories = ["Footwear", "Apparel", "Sportswear"]
             domain_archetype = "sportswear_sporting_goods"
 
-        elif is_developer_or_software:
-            primary_industry = "Software & Technology"
-            business_model = "B2B SaaS and Developer Services"
-            primary_category = "Developer Infrastructure" if "developer" in corpus or "api" in corpus else "Enterprise SaaS"
-            secondary_categories = ["Cloud Software", "Developer Tools", "AI Infrastructure"]
-            domain_archetype = "saas_software"
+        elif is_crm:
+            primary_industry = "Sales Intelligence & CRM Software"
+            business_model = "B2B SaaS"
+            primary_category = "CRM & Sales Intelligence"
+            secondary_categories = ["Sales Pipeline Management", "B2B Prospecting", "Outbound Automation", "Revenue Operations"]
+            domain_archetype = "crm_sales"
+            subcategories["crm_sales"] = profile.get_clean_products() or ["CRM & Sales Software"]
 
-        elif is_service_business:
+        elif is_developer:
+            primary_industry = "Software & Cloud Technology"
+            business_model = "B2B SaaS and Developer Services"
+            primary_category = "Developer Infrastructure"
+            secondary_categories = ["Cloud Infrastructure", "API Services", "Developer Tooling"]
+            domain_archetype = "saas_software"
+            subcategories["developer_tools"] = profile.get_clean_products() or ["Developer Infrastructure"]
+
+        elif is_marketing:
+            primary_industry = "Marketing Automation & Growth"
+            business_model = "B2B SaaS"
+            primary_category = "Marketing Automation"
+            secondary_categories = ["Email Marketing", "Customer Segmentation", "Lifecycle Campaigns"]
+            domain_archetype = "marketing_automation"
+            subcategories["marketing_automation"] = profile.get_clean_products() or ["Marketing Automation Tool"]
+
+        elif is_fintech:
+            primary_industry = "Financial Technology & Payments"
+            business_model = "Fintech SaaS"
+            primary_category = "Fintech & Payments"
+            secondary_categories = ["Payment Processing", "Billing & Invoicing", "Financial Automation"]
+            domain_archetype = "fintech"
+            subcategories["fintech"] = profile.get_clean_products() or ["Payment Software"]
+
+        elif is_healthcare:
+            primary_industry = "Healthcare Technology & Healthtech"
+            business_model = "Healthcare SaaS"
+            primary_category = "Healthcare Technology"
+            secondary_categories = ["Clinical Management", "Patient Scheduling", "Health Records"]
+            domain_archetype = "healthcare_tech"
+            subcategories["healthcare_tech"] = profile.get_clean_products() or ["Healthcare Software"]
+
+        elif is_professional_service:
             primary_industry = "Professional Services"
             business_model = "Client Services"
-            primary_category = "Business Services"
+            primary_category = "Professional Services"
             secondary_categories = ["Consulting", "Advisory Services"]
             domain_archetype = "services_professional"
+            subcategories["professional_services"] = profile.get_clean_products() or ["Consulting Services"]
 
-        elif "retail" in corpus or "store" in corpus or "shop" in corpus:
-            primary_industry = "Retail"
-            business_model = "E-Commerce and Retail"
+        elif is_retail_ecommerce:
+            primary_industry = "Retail & E-Commerce"
+            business_model = "E-Commerce"
             primary_category = "Consumer Goods"
             secondary_categories = ["Retail Merchandise", "Online Shopping"]
             domain_archetype = "ecommerce_retail"
+            subcategories["ecommerce_retail"] = profile.get_clean_products() or ["Consumer Products"]
+
+        elif any(k in corpus for k in ("software", "saas", "platform", "app", "application", "businessapplication", "softwareapplication", "workflow")):
+            primary_industry = "Business Software & Technology"
+            business_model = "B2B SaaS"
+            primary_category = "Business Software"
+            secondary_categories = ["Cloud Applications", "Productivity Software"]
+            domain_archetype = "general_business_software"
+            subcategories["general_business_software"] = profile.get_clean_products() or ["Business Software"]
 
         else:
             primary_industry = profile.industry or ""
             business_model = "Commercial Business"
             primary_category = profile.get_primary_category() or ""
-            domain_archetype = "general"
+            domain_archetype = "uncertain_category"
             if not primary_category:
                 secondary_categories = []
                 warnings.append("Profile evidence was insufficient; missing industry, category, and verified facts.")
                 confidence = 0.2
             else:
                 secondary_categories = ["Commercial Solutions"]
-                warnings.append("Profile evidence was sparse; using conservative general classification.")
+                warnings.append("Profile evidence was sparse; category cannot be reliably confirmed from homepage.")
                 confidence = max(0.4, confidence - 0.2)
+            subcategories["uncertain_category"] = profile.get_clean_products() or ["Commercial Solutions"]
 
         return BrandClassificationResult(
             primary_industry=primary_industry,

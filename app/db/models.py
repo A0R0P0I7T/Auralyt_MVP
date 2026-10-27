@@ -251,6 +251,8 @@ class PromptCandidate(Base):
     quality_score: Mapped[float] = mapped_column(Float, default=1.0, index=True)
 
     is_approved: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(32), default="approved", nullable=False, index=True)
+    review_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     user_edited: Mapped[bool] = mapped_column(Boolean, default=False)
     edit_history: Mapped[List[dict]] = mapped_column(JSON, default=list)

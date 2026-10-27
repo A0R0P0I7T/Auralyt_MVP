@@ -152,8 +152,8 @@ class VisibilityResponseEvaluator:
 
         if not response_text or not response_text.strip():
             res.brand_mentioned = False
-            res.recommendation_status = "not_mentioned"
-            res.comparative_position = "not_mentioned"
+            res.recommendation_status = "unknown"
+            res.comparative_position = "unknown"
             res.evaluation_reasoning = "Empty or missing response from AI model provider."
             return res
 

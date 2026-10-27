@@ -434,14 +434,19 @@ async function handleRunExperiment(event) {
     updateExperimentStep(3, "RUNNING", `Dispatching ${generatedCount} prompts to ${provider.toUpperCase()}...`);
     updateExperimentProgress(65, `Engine 3: Initiating visibility scan via ${provider}...`);
 
+    const scanPayload = {
+      provider: provider,
+      max_prompts: promptCount,
+      force_rescan: true
+    };
+    if (provider === "gemini") {
+      scanPayload.model_name = "gemini-3.5-flash-lite";
+    }
+
     const scanRes = await fetch(`/api/brands/${brandId}/visibility/scans`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: provider,
-        max_prompts: promptCount,
-        force_rescan: true
-      })
+      body: JSON.stringify(scanPayload)
     });
 
     const scanData = await scanRes.json();
@@ -456,7 +461,7 @@ async function handleRunExperiment(event) {
     let e3Completed = false;
     let pollData = null;
     const pollStartTime = Date.now();
-    const maxPollDurationMs = Math.max(180000, promptCount * 12000);
+    const maxPollDurationMs = Math.max(300000, promptCount * 18000);
 
     while (!e3Completed) {
       if (Date.now() - pollStartTime > maxPollDurationMs) {
@@ -615,14 +620,17 @@ async function loadAndRenderExperimentResults(brandId, scanId) {
     }
     if (tokensEl) tokensEl.innerText = totalTokens > 0 ? `${totalTokens.toLocaleString()} tokens` : (scan.tokens_consumed ? `${scan.tokens_consumed} tokens` : "N/A");
 
-    if (countLabel) countLabel.innerText = `${results.length} Prompts Evaluated`;
+    if (countLabel) {
+      const failedCount = scan.prompts_failed != null ? scan.prompts_failed : results.filter(r => r.execution_status !== 'success').length;
+      countLabel.innerText = `${results.length} / ${selected} Prompts Evaluated (${completed} succeeded, ${failedCount} failed/timed out)`;
+    }
 
     // 4. Render prompt evaluation cards
     if (results.length === 0) {
       cardsContainer.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 2rem;">No prompt evaluations recorded for this scan.</div>`;
     } else {
       cardsContainer.innerHTML = results.map(r => {
-        const isFailed = r.execution_status === "failed";
+        const isFailed = (r.execution_status === "failed" || r.execution_status === "error" || r.execution_status === "timeout");
 
         let recBadge = "";
         if (isFailed) {
@@ -639,7 +647,11 @@ async function loadAndRenderExperimentResults(brandId, scanId) {
 
         let mentionBadge = "";
         if (isFailed) {
-          mentionBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">QUERY FAILED</span>`;
+          if (r.execution_status === "timeout") {
+            mentionBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">TIMED OUT</span>`;
+          } else {
+            mentionBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">QUERY FAILED</span>`;
+          }
         } else if (r.brand_mentioned) {
           mentionBadge = `<span class="badge badge-completed">MENTIONED</span>`;
         } else {
@@ -1447,12 +1459,14 @@ function renderPromptsTable(items) {
     }
 
     const editedPill = p.user_edited ? `<span class="badge-edited">EDITED</span>` : "";
+    const isGoldFallback = p.scores && (p.scores.provenance === "gold_fallback" || p.scores.gold_id);
+    const goldPill = isGoldFallback ? `<span class="badge" style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.4); font-size: 0.65rem; font-weight: 600; margin-left: 0.35rem;" title="Gold Fallback (${p.scores.gold_id || ''})">GOLD BENCHMARK</span>` : "";
 
     return `
       <tr style="${p.is_archived ? 'opacity: 0.5;' : ''}">
         <td>
           <div class="prompt-text-cell">
-            ${escapeHtml(p.text)} ${editedPill}
+            ${escapeHtml(p.text)} ${editedPill} ${goldPill}
           </div>
         </td>
         <td>
@@ -1750,14 +1764,19 @@ async function handleStartVisibilityScan() {
   btn.innerText = "⏳ Initiating Visibility Scan...";
 
   try {
+    const scanPayload = {
+      provider: provider,
+      max_prompts: maxPrompts,
+      force_rescan: forceRescan
+    };
+    if (provider === "gemini") {
+      scanPayload.model_name = "gemini-3.5-flash-lite";
+    }
+
     const res = await fetch(`/api/brands/${currentBrandId}/visibility/scans`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: provider,
-        max_prompts: maxPrompts,
-        force_rescan: forceRescan
-      })
+      body: JSON.stringify(scanPayload)
     });
 
     const data = await res.json();
@@ -1952,7 +1971,7 @@ function filterVisibilityResults() {
   }
 
   container.innerHTML = filtered.map(r => {
-    const isFailed = r.execution_status === "failed";
+    const isFailed = (r.execution_status === "failed" || r.execution_status === "error" || r.execution_status === "timeout");
 
     let recBadge = "";
     if (isFailed) {
@@ -1969,7 +1988,11 @@ function filterVisibilityResults() {
 
     let mentionBadge = "";
     if (isFailed) {
-      mentionBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">QUERY FAILED</span>`;
+      if (r.execution_status === "timeout") {
+        mentionBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">TIMED OUT</span>`;
+      } else {
+        mentionBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">QUERY FAILED</span>`;
+      }
     } else if (r.brand_mentioned) {
       mentionBadge = `<span class="badge badge-completed">MENTIONED</span>`;
     } else {

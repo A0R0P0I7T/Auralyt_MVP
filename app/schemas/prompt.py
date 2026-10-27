@@ -48,6 +48,8 @@ class PromptCandidateResponse(BaseModel):
     scores: Dict[str, Any] = {}
     quality_score: float
     is_approved: bool
+    lifecycle_status: str = "proposed"
+    review_notes: Optional[str] = None
     is_archived: bool
     user_edited: bool
     created_at: datetime
@@ -58,6 +60,18 @@ class PromptUpdateRequest(BaseModel):
     text: Optional[str] = Field(default=None, min_length=5, max_length=1000)
     is_approved: Optional[bool] = None
     is_archived: Optional[bool] = None
+
+
+class PromptReviewRequest(BaseModel):
+    lifecycle_status: str = Field(..., description="Review status: approved, rejected, proposed, tracked")
+    text: Optional[str] = Field(default=None, min_length=5, max_length=1000, description="Optional updated prompt text")
+    review_notes: Optional[str] = Field(default=None, max_length=1000, description="Optional reviewer notes")
+
+
+class PromptBatchReviewRequest(BaseModel):
+    prompt_ids: List[str] = Field(..., min_length=1, description="List of prompt IDs to review")
+    lifecycle_status: str = Field(..., description="Review status: approved, rejected, proposed, tracked")
+    review_notes: Optional[str] = Field(default=None, max_length=1000, description="Optional reviewer notes")
 
 
 class PromptListResponse(BaseModel):

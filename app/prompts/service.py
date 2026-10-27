@@ -203,6 +203,14 @@ class PromptIntelligenceService:
 
                 # 7. Stage C: Candidate Generation
                 generator = get_prompt_generator()
+                from app.prompts.generator import GeminiGenerator
+                if isinstance(generator, GeminiGenerator) and settings.LLM_API_KEY:
+                    run.provider = "gemini"
+                    run.model_name = settings.LLM_MODEL
+                else:
+                    run.provider = "deterministic"
+                    run.model_name = "template_engine"
+
                 raw_candidates = await generator.generate(normalized_profile, plan)
                 total_generated = len(raw_candidates)
 
@@ -291,6 +299,8 @@ class PromptIntelligenceService:
                         },
                         quality_score=fc.quality_score,
                         is_approved=fc.is_approved,
+                        lifecycle_status="approved" if fc.is_approved else "rejected",
+                        review_notes=fc.rejection_reason,
                         is_archived=False,
                         user_edited=False,
                         edit_history=[]
@@ -342,6 +352,7 @@ class PromptIntelligenceService:
         category: Optional[str] = None,
         intent: Optional[str] = None,
         is_approved: Optional[bool] = None,
+        lifecycle_status: Optional[str] = None,
         is_archived: bool = False,
         search: Optional[str] = None,
         profile_version: Optional[int] = None,
@@ -378,6 +389,8 @@ class PromptIntelligenceService:
                 base_query = base_query.where(PromptCandidate.intent == intent)
             if is_approved is not None:
                 base_query = base_query.where(PromptCandidate.is_approved.is_(is_approved))
+            if lifecycle_status:
+                base_query = base_query.where(PromptCandidate.lifecycle_status == lifecycle_status)
             if search:
                 base_query = base_query.where(PromptCandidate.text.ilike(f"%{search.strip()}%"))
 
@@ -528,3 +541,78 @@ class PromptIntelligenceService:
         finally:
             if close_session:
                 await db.close()
+
+    @staticmethod
+    async def review_prompt(
+        brand_id: str,
+        prompt_id: str,
+        lifecycle_status: str,  # "approved", "rejected", "proposed", "tracked"
+        text: Optional[str] = None,
+        review_notes: Optional[str] = None,
+        db: Optional[AsyncSession] = None
+    ) -> PromptCandidate:
+        """Updates prompt review lifecycle status and text following user review."""
+        close_session = False
+        if db is None:
+            db = async_session_factory()
+            close_session = True
+
+        try:
+            stmt = select(PromptCandidate).where(
+                PromptCandidate.id == prompt_id,
+                PromptCandidate.brand_id == brand_id
+            )
+            res = await db.execute(stmt)
+            prompt = res.scalar_one_or_none()
+            if not prompt:
+                raise ValueError("Prompt not found for this brand.")
+
+            valid_statuses = ("generated", "validated", "proposed", "approved", "rejected", "tracked")
+            if lifecycle_status not in valid_statuses:
+                raise ValueError(f"Invalid lifecycle_status '{lifecycle_status}'. Allowed: {valid_statuses}")
+
+            prompt.lifecycle_status = lifecycle_status
+            prompt.is_approved = (lifecycle_status in ("approved", "tracked"))
+            if review_notes is not None:
+                prompt.review_notes = review_notes
+
+            if text and text.strip() and text.strip() != prompt.text:
+                history = list(prompt.edit_history or [])
+                history.append({
+                    "previous_text": prompt.text,
+                    "updated_at": str(utc_now()),
+                    "reason": review_notes or "user_edit"
+                })
+                prompt.text = text.strip()
+                prompt.normalized_text = normalize_prompt_text(text.strip())
+                prompt.user_edited = True
+                prompt.edit_history = history
+
+            await db.commit()
+            await db.refresh(prompt)
+            return prompt
+        finally:
+            if close_session:
+                await db.close()
+
+    @staticmethod
+    async def batch_review_prompts(
+        brand_id: str,
+        prompt_ids: List[str],
+        lifecycle_status: str,
+        review_notes: Optional[str] = None,
+        db: Optional[AsyncSession] = None
+    ) -> List[PromptCandidate]:
+        """Applies lifecycle status to multiple prompts for a brand."""
+        updated = []
+        for pid in prompt_ids:
+            p = await PromptIntelligenceService.review_prompt(
+                brand_id=brand_id,
+                prompt_id=pid,
+                lifecycle_status=lifecycle_status,
+                review_notes=review_notes,
+                db=db
+            )
+            updated.append(p)
+        return updated
+

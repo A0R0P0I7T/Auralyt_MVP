@@ -49,6 +49,76 @@ def is_navigation_or_ui_noise(text: Optional[str]) -> bool:
     return False
 
 
+def humanize_category_or_industry(val: Optional[str]) -> Optional[str]:
+    """Humanize schema.org or camelCase/PascalCase taxonomy strings."""
+    if not val:
+        return val
+    s = val.strip()
+    mapping = {
+        "businessapplication": "business software",
+        "softwareapplication": "software",
+        "webapplication": "web applications",
+        "mobileapplication": "mobile applications",
+        "localbusiness": "local business services",
+        "organization": "enterprise services",
+        "corporation": "enterprise services",
+        "financialservice": "fintech & financial services",
+        "medicalorganization": "healthcare services",
+    }
+    low = s.lower().replace(" ", "").replace("_", "").replace("-", "")
+    if low in mapping:
+        return mapping[low]
+    # Split PascalCase if detected (e.g. "BusinessApplication" -> "Business Application")
+    if re.match(r"^[A-Z][a-z]+(?:[A-Z][a-z]+)+$", s):
+        return re.sub(r"([a-z])([A-Z])", r"\1 \2", s)
+    return s
+
+
+def get_natural_category_phrase(category: Optional[str], archetype: Optional[str] = None) -> str:
+    """Produce a natural, grammatically sound category phrase for prompt slot-filling."""
+    arch = (archetype or "").lower()
+    if arch == "crm_sales":
+        return "CRM and sales software"
+    elif arch == "developer_tools":
+        return "developer tools and APIs"
+    elif arch == "marketing_automation":
+        return "marketing automation software"
+    elif arch == "fintech":
+        return "fintech and billing software"
+    elif arch == "healthcare_tech":
+        return "healthcare practice software"
+    elif arch in ("footwear_apparel", "sportswear_sporting_goods"):
+        return "athletic footwear and apparel"
+    elif arch == "ecommerce_retail":
+        return "e-commerce products"
+    elif arch in ("services_professional", "professional_services"):
+        return "professional services"
+
+    cat = (category or "").strip()
+    if not cat:
+        return "business software"
+
+    low = cat.lower()
+    if any(k in low for k in ("crm", "sales intelligence", "lead management", "prospecting")):
+        return "CRM and sales software"
+    if any(k in low for k in ("developer", "api gateway", "infrastructure", "sdk")):
+        return "developer tools and APIs"
+    if any(k in low for k in ("marketing", "email automation", "newsletter")):
+        return "marketing automation software"
+    if any(k in low for k in ("fintech", "payment", "billing", "invoice")):
+        return "fintech and billing software"
+    if any(k in low for k in ("health", "medical", "ehr", "clinical")):
+        return "healthcare practice software"
+    if any(k in low for k in ("shoes", "footwear", "running", "sporting goods")):
+        return "athletic footwear and apparel"
+
+    # Avoid awkward phrases like 'B2B Software & Cloud Platforms' or 'platforms for ... platforms'
+    cleaned = humanize_category_or_industry(cat) or cat
+    if "platform" in cleaned.lower() and "software" in cleaned.lower():
+        return "business software"
+    return cleaned
+
+
 def _get_attr_or_key(obj: Any, key: str, default: Any = None) -> Any:
     if obj is None:
         return default
@@ -74,7 +144,8 @@ class ProfileNormalizer:
         domain = str(_get_attr_or_key(brand_info, "domain", "") or "")
         raw_bname = _get_attr_or_key(brand_info, "business_name")
         business_name = str(raw_bname) if raw_bname else domain.replace("www.", "").split(".")[0].capitalize()
-        industry = _get_attr_or_key(brand_info, "industry")
+        raw_ind = _get_attr_or_key(brand_info, "industry")
+        industry = humanize_category_or_industry(raw_ind)
         target_market = _get_attr_or_key(brand_info, "target_market")
         primary_lang = _get_attr_or_key(brand_info, "language") or "en"
         profile_version = int(data.get("profile_version", 1))
@@ -119,12 +190,19 @@ class ProfileNormalizer:
                 p_val = p.get("value", p) if "value" in p else p
                 if isinstance(p_val, dict):
                     p_name = p_val.get("name") or p_val.get("title") or p_val.get("product_service")
+                    p_desc = p_val.get("description")
                 elif isinstance(p_val, str):
                     p_name = p_val
+                    p_desc = None
                 else:
                     p_name = None
+                    p_desc = None
                 if p_name and isinstance(p_name, str) and not is_navigation_or_ui_noise(p_name):
                     clean_name = p_name.strip()
+                    if clean_name.lower() == business_name.lower() and p_desc:
+                        cap = p_desc.split(".")[0].split(",")[0].strip()
+                        if cap and len(cap) <= 60 and not is_navigation_or_ui_noise(cap):
+                            clean_name = cap
                     if clean_name not in products:
                         products.append(clean_name)
             elif isinstance(p, str) and not is_navigation_or_ui_noise(p):
@@ -132,16 +210,25 @@ class ProfileNormalizer:
                 if clean_name not in products:
                     products.append(clean_name)
 
-        # Pull from facts if empty
-        if not products:
-            for f in grounded_facts:
-                if f.fact_type in ("product_service", "product_feature"):
-                    val = f.fact_value
-                    name = val.get("name") if isinstance(val, dict) else str(val)
-                    if name and isinstance(name, str) and not is_navigation_or_ui_noise(name):
+        # Pull from facts if empty or extract capabilities
+        for f in grounded_facts:
+            if f.fact_type in ("product_service", "product_feature"):
+                val = f.fact_value
+                if isinstance(val, dict):
+                    name = val.get("name")
+                    desc = val.get("description")
+                    if name and isinstance(name, str):
                         clean_name = name.strip()
-                        if clean_name not in products:
+                        if clean_name.lower() == business_name.lower() and desc:
+                            cap = desc.split(".")[0].split(",")[0].strip()
+                            if cap and len(cap) <= 60 and not is_navigation_or_ui_noise(cap) and cap not in products:
+                                products.append(cap)
+                        elif not is_navigation_or_ui_noise(clean_name) and clean_name not in products:
                             products.append(clean_name)
+                elif isinstance(val, str) and not is_navigation_or_ui_noise(val):
+                    clean_name = val.strip()
+                    if clean_name not in products:
+                        products.append(clean_name)
 
         # 3. Target Audiences
         raw_audiences = data.get("target_audience", [])
@@ -202,6 +289,17 @@ class ProfileNormalizer:
                         for item in decompose_compound_capabilities(str(name)):
                             if item and item.strip() and item.strip() not in use_cases:
                                 use_cases.append(item.strip())
+
+        if not use_cases and description:
+            desc_lower = description.lower()
+            if "workflow" in desc_lower:
+                use_cases.append("running automated workflows")
+            if "gtm" in desc_lower or "outbound" in desc_lower:
+                use_cases.append("launching outbound sales plays")
+            if "enrich" in desc_lower or "data source" in desc_lower or "data" in desc_lower:
+                use_cases.append("enriching B2B prospect data")
+            if "prospect" in desc_lower or "lead" in desc_lower:
+                use_cases.append("automating sales prospecting")
 
         # 5. Pricing Models
         raw_pricing = data.get("pricing_information", [])
@@ -278,6 +376,7 @@ class ProfileNormalizer:
             and len(products) == 0
             and len(audiences) == 0
             and not description
+            and not industry
         )
 
         return NormalizedBrandProfile(

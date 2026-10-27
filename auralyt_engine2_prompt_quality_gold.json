@@ -1,0 +1,869 @@
+{
+  "dataset_id": "auralyt_engine2_geo_discovery_gold_v4",
+  "title": "Auralyt Engine 2/3 Brand Discoverability Benchmark — Query Set",
+  "schema_version": "3.0.0",
+  "language": "English",
+  "market_scope": "Category-specific product/service discovery. Geographic market is intentionally unset; configure it consistently for each run if localized results are desired.",
+  "created_date": "2026-10-27",
+  "purpose": "Provide a fixed set of natural, brand-neutral discovery queries for measuring whether a target brand is favorably recommended, unfavorably mentioned, or absent in LLM responses.",
+  "benchmark_design": {
+    "total_examples": 100,
+    "examples_per_category": 20,
+    "categories": [
+      "crm",
+      "ai_assistants",
+      "clothing",
+      "footwear",
+      "skincare"
+    ],
+    "query_labels": null,
+    "note": "Queries are approved category-discovery prompts and may be used as production fallbacks. If a query is selected as an Engine 2 fallback, exclude that instance from independent holdout scoring of Engine 2 generation. Favorable/unfavorable/absent labels belong to each generated LLM response, not to the query."
+  },
+  "targets": {
+    "crm": {
+      "name": "GoHighLevel",
+      "url": "https://www.gohighlevel.com"
+    },
+    "ai_assistants": {
+      "name": "ChatGPT",
+      "url": "https://chatgpt.com"
+    },
+    "clothing": {
+      "name": "H&M",
+      "url": "https://www2.hm.com/"
+    },
+    "footwear": {
+      "name": "Nike",
+      "url": "https://www.nike.com/"
+    },
+    "skincare": {
+      "name": "Vaseline",
+      "url": "https://www.vaseline.com/"
+    }
+  },
+  "scoring_guidance": {
+    "favorable_visibility": "Target is recommended, included in a good-options list, or described neutrally/positively as a reasonable choice.",
+    "unfavorable_mention": "Target is mentioned but explicitly criticized or discouraged. Count as a mention, but not as favorable visibility.",
+    "absent": "Target name is not present in the answer.",
+    "site_citation": "Track separately whether the target's official domain is linked/cited, even when the brand is mentioned in text."
+  },
+  "run_guidance": {
+    "do_not_include_target_brand_in_query": true,
+    "use_same_query_set_across_platforms": true,
+    "run_each_query_in_a_fresh_conversation": true,
+    "record_platform_model_search_mode_locale_and_date": true,
+    "main_measurement": "Search-assisted/default consumer chatbot response. Keep no-search model-only runs separate.",
+    "repeat_runs": "Repeat queries when feasible because outputs can vary."
+  },
+  "fields": {
+    "id": "Stable query identifier.",
+    "category": "Category the prompt should search within.",
+    "intent": "Broad discovery intent.",
+    "query": "Natural user-like search prompt; keep unchanged across platforms.",
+    "target_brand": "Brand whose visibility is being measured. It is metadata and must not be inserted into the query.",
+    "quality_rationale": "Why this query belongs in the discovery benchmark."
+  },
+  "examples": [
+    {
+      "id": "CRM-001",
+      "category": "crm",
+      "intent": "broad_recommendation",
+      "query": "What’s a good CRM for a small business?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-002",
+      "category": "crm",
+      "intent": "ease_of_use",
+      "query": "Which CRM is easiest for a small business to get started with?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-003",
+      "category": "crm",
+      "intent": "shortlist",
+      "query": "What are some of the best CRMs for small businesses right now?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-004",
+      "category": "crm",
+      "intent": "price_value",
+      "query": "What’s an affordable CRM for a small team?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-005",
+      "category": "crm",
+      "intent": "business_type",
+      "query": "Which CRM is good for a marketing agency?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-006",
+      "category": "crm",
+      "intent": "business_type",
+      "query": "What CRM do small sales teams usually choose?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-007",
+      "category": "crm",
+      "intent": "price_value",
+      "query": "Can you recommend a CRM for a new business that’s trying to keep costs down?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-008",
+      "category": "crm",
+      "intent": "popularity",
+      "query": "What are the most popular CRM platforms for growing businesses?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-009",
+      "category": "crm",
+      "intent": "price_value",
+      "query": "Which CRM is worth paying for if you’re a small business?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-010",
+      "category": "crm",
+      "intent": "ease_of_use",
+      "query": "What are some simple CRM options for keeping track of customers?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-011",
+      "category": "crm",
+      "intent": "price_value",
+      "query": "Which CRM would you recommend for a small business with a limited budget?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-012",
+      "category": "crm",
+      "intent": "business_type",
+      "query": "What’s a good all-in-one CRM for a small agency?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-013",
+      "category": "crm",
+      "intent": "business_type",
+      "query": "What are the top CRM choices for a local service business?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-014",
+      "category": "crm",
+      "intent": "shortlist",
+      "query": "I’m looking for a CRM for my small business. Which ones should I compare?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-015",
+      "category": "crm",
+      "intent": "price_value",
+      "query": "Which CRM gives small businesses the best value for money?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-001",
+      "category": "ai_assistants",
+      "intent": "broad_recommendation",
+      "query": "What’s the best AI assistant for everyday use?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-002",
+      "category": "ai_assistants",
+      "intent": "broad_recommendation",
+      "query": "Which AI chatbot is good for answering general questions?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-003",
+      "category": "ai_assistants",
+      "intent": "popularity",
+      "query": "What are some of the most popular AI assistants right now?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-004",
+      "category": "ai_assistants",
+      "intent": "price_value",
+      "query": "Which AI assistant is worth using if I don’t want to pay?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-005",
+      "category": "ai_assistants",
+      "intent": "use_case",
+      "query": "What’s a good AI tool for helping with writing?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-006",
+      "category": "ai_assistants",
+      "intent": "audience",
+      "query": "Which AI assistant would you recommend for a student?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-007",
+      "category": "ai_assistants",
+      "intent": "shortlist",
+      "query": "What are the best AI chatbots available at the moment?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-008",
+      "category": "ai_assistants",
+      "intent": "price_value",
+      "query": "Which AI assistant gives the best value for money?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-009",
+      "category": "ai_assistants",
+      "intent": "ease_of_use",
+      "query": "I want to try an AI chatbot. Which ones are good for beginners?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-010",
+      "category": "ai_assistants",
+      "intent": "use_case",
+      "query": "What AI assistant do people use for brainstorming ideas?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-011",
+      "category": "ai_assistants",
+      "intent": "use_case",
+      "query": "Which AI chatbot is best for work and everyday tasks?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-012",
+      "category": "ai_assistants",
+      "intent": "alternatives",
+      "query": "What are some good alternatives to the AI assistants everyone already knows?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-013",
+      "category": "ai_assistants",
+      "intent": "audience",
+      "query": "Which AI assistant is the most useful for a small business owner?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-014",
+      "category": "ai_assistants",
+      "intent": "broad_recommendation",
+      "query": "What’s a reliable AI chatbot to use when I need help thinking something through?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-015",
+      "category": "ai_assistants",
+      "intent": "shortlist",
+      "query": "Can you give me a shortlist of good AI assistants and what each is best known for?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-001",
+      "category": "clothing",
+      "intent": "broad_recommendation",
+      "query": "What are some good clothing brands for everyday basics?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-002",
+      "category": "clothing",
+      "intent": "price_value",
+      "query": "Which clothing stores have affordable clothes for women?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-003",
+      "category": "clothing",
+      "intent": "price_value",
+      "query": "Where can I find good quality clothes without spending too much?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-004",
+      "category": "clothing",
+      "intent": "popularity",
+      "query": "What are some popular clothing brands for men right now?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-005",
+      "category": "clothing",
+      "intent": "use_case",
+      "query": "Which clothing brands are good for casual everyday wear?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-006",
+      "category": "clothing",
+      "intent": "occasion",
+      "query": "What are some good places to shop for work clothes on a budget?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-007",
+      "category": "clothing",
+      "intent": "audience",
+      "query": "Which clothing stores have a good selection for the whole family?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-008",
+      "category": "clothing",
+      "intent": "shopping_channel",
+      "query": "What are some reliable online clothing stores?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-009",
+      "category": "clothing",
+      "intent": "price_value",
+      "query": "Which clothing brands offer good value for money?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-010",
+      "category": "clothing",
+      "intent": "price_value",
+      "query": "Where can I find stylish clothes at reasonable prices?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-011",
+      "category": "clothing",
+      "intent": "product_range",
+      "query": "What are some popular stores for basics like T-shirts, jeans, and sweaters?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-012",
+      "category": "clothing",
+      "intent": "price_value",
+      "query": "Which clothing brands are good for updating a wardrobe without spending a lot?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-013",
+      "category": "clothing",
+      "intent": "audience",
+      "query": "What are some good clothing stores for teenagers?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-014",
+      "category": "clothing",
+      "intent": "occasion",
+      "query": "Where should I shop for a simple outfit for a night out?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-015",
+      "category": "clothing",
+      "intent": "shortlist",
+      "query": "Can you recommend a few clothing brands with a wide range of styles?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-001",
+      "category": "footwear",
+      "intent": "comfort",
+      "query": "What are the most comfortable shoes for walking all day?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-002",
+      "category": "footwear",
+      "intent": "broad_recommendation",
+      "query": "Which brands make good everyday sneakers?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-003",
+      "category": "footwear",
+      "intent": "use_case",
+      "query": "What are some of the best running shoe brands?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-004",
+      "category": "footwear",
+      "intent": "use_case",
+      "query": "Which shoes are good for walking but still look casual?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-005",
+      "category": "footwear",
+      "intent": "popularity",
+      "query": "What are some popular sneakers right now?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-006",
+      "category": "footwear",
+      "intent": "use_case",
+      "query": "What’s a good pair of shoes for standing at work all day?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-007",
+      "category": "footwear",
+      "intent": "price_value",
+      "query": "Which running shoes offer the best value for money?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-008",
+      "category": "footwear",
+      "intent": "comfort",
+      "query": "What are some comfortable trainers for everyday wear?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-009",
+      "category": "footwear",
+      "intent": "price_value",
+      "query": "Which shoe brands are worth the price?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-010",
+      "category": "footwear",
+      "intent": "use_case",
+      "query": "Can you recommend good shoes for someone who walks a lot?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-011",
+      "category": "footwear",
+      "intent": "shortlist",
+      "query": "What are some of the best-known athletic footwear brands?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-012",
+      "category": "footwear",
+      "intent": "use_case",
+      "query": "Which sneakers are good for both the gym and running errands?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-013",
+      "category": "footwear",
+      "intent": "price_value",
+      "query": "What are some good affordable shoes for daily wear?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-014",
+      "category": "footwear",
+      "intent": "shortlist",
+      "query": "Which brands should I look at for comfortable sports shoes?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-015",
+      "category": "footwear",
+      "intent": "product_range",
+      "query": "What’s a popular shoe brand with options for running, training, and everyday wear?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-001",
+      "category": "skincare",
+      "intent": "broad_recommendation",
+      "query": "What’s a good moisturizer for dry skin?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-002",
+      "category": "skincare",
+      "intent": "price_value",
+      "query": "Which skincare brands are good and affordable?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-003",
+      "category": "skincare",
+      "intent": "popularity",
+      "query": "What are some popular skincare brands for everyday use?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-004",
+      "category": "skincare",
+      "intent": "price_value",
+      "query": "What’s a good body lotion that doesn’t cost too much?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-005",
+      "category": "skincare",
+      "intent": "use_case",
+      "query": "Which skincare products are good for keeping skin moisturized?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-006",
+      "category": "skincare",
+      "intent": "broad_recommendation",
+      "query": "What are some reliable skincare brands for a simple routine?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-007",
+      "category": "skincare",
+      "intent": "price_value",
+      "query": "Which body moisturizers are worth the price?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-008",
+      "category": "skincare",
+      "intent": "price_value",
+      "query": "Can you recommend an affordable moisturizer for daily use?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-009",
+      "category": "skincare",
+      "intent": "use_case",
+      "query": "What are some good skincare products for dry, rough skin?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-010",
+      "category": "skincare",
+      "intent": "shortlist",
+      "query": "Which skincare brands are popular for basic moisturizers and lotions?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-011",
+      "category": "skincare",
+      "intent": "ease_of_use",
+      "query": "What’s a good skincare brand for someone who wants to keep their routine simple?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-012",
+      "category": "skincare",
+      "intent": "use_case",
+      "query": "What are some well-known products for protecting dry skin?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-013",
+      "category": "skincare",
+      "intent": "use_case",
+      "query": "Which moisturizers are good for everyday use on hands and body?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-014",
+      "category": "skincare",
+      "intent": "shopping_channel",
+      "query": "What are some affordable skincare brands I can find in stores?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-015",
+      "category": "skincare",
+      "intent": "shortlist",
+      "query": "Can you give me a shortlist of good body lotions and moisturizers?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-016",
+      "category": "crm",
+      "intent": "business_type",
+      "query": "What’s a good CRM for a startup that’s starting to grow?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-017",
+      "category": "crm",
+      "intent": "business_type",
+      "query": "Which CRM should a small real estate business look at?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-018",
+      "category": "crm",
+      "intent": "price_value",
+      "query": "What are some affordable CRM systems for a service business?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-019",
+      "category": "crm",
+      "intent": "use_case",
+      "query": "What CRM would you recommend for a team moving beyond spreadsheets?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CRM-020",
+      "category": "crm",
+      "intent": "shortlist",
+      "query": "Can you list good CRM options that don’t cost a fortune?",
+      "target_brand": "GoHighLevel",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-016",
+      "category": "ai_assistants",
+      "intent": "ease_of_use",
+      "query": "Which AI assistant is a good place to start if I’ve never used one before?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-017",
+      "category": "ai_assistants",
+      "intent": "popularity",
+      "query": "What are the most widely used AI chatbots right now?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-018",
+      "category": "ai_assistants",
+      "intent": "use_case",
+      "query": "What’s a good AI assistant for helping me write a job application?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-019",
+      "category": "ai_assistants",
+      "intent": "use_case",
+      "query": "Which AI assistants are worth trying for planning and organizing everyday tasks?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "AI_ASSISTANTS-020",
+      "category": "ai_assistants",
+      "intent": "shortlist",
+      "query": "Can you compare a few popular AI assistants for general use?",
+      "target_brand": "ChatGPT",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-016",
+      "category": "clothing",
+      "intent": "occasion",
+      "query": "Where can I find affordable everyday clothes for work?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-017",
+      "category": "clothing",
+      "intent": "shopping_channel",
+      "query": "What are some good online stores for shopping for clothes?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-018",
+      "category": "clothing",
+      "intent": "product_range",
+      "query": "Which brands are good for comfortable jeans I can wear every day?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-019",
+      "category": "clothing",
+      "intent": "use_case",
+      "query": "What are some comfortable clothes to pack for a summer trip?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "CLOTHING-020",
+      "category": "clothing",
+      "intent": "price_value",
+      "query": "Which clothing stores have stylish options on a budget?",
+      "target_brand": "H&M",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-016",
+      "category": "footwear",
+      "intent": "comfort",
+      "query": "What are some well-cushioned sneakers for walking around town?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-017",
+      "category": "footwear",
+      "intent": "price_value",
+      "query": "Where can I find affordable shoes for walking and standing all day?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-018",
+      "category": "footwear",
+      "intent": "shortlist",
+      "query": "Which athletic shoe brands are known for comfortable everyday options?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-019",
+      "category": "footwear",
+      "intent": "use_case",
+      "query": "What shoes are good for a city trip where I’ll be walking a lot?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "FOOTWEAR-020",
+      "category": "footwear",
+      "intent": "price_value",
+      "query": "What are some good beginner running shoes at a reasonable price?",
+      "target_brand": "Nike",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-016",
+      "category": "skincare",
+      "intent": "use_case",
+      "query": "What’s a good moisturizer to keep dry hands from feeling rough?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-017",
+      "category": "skincare",
+      "intent": "use_case",
+      "query": "Which body lotions are good for sensitive skin and everyday use?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-018",
+      "category": "skincare",
+      "intent": "price_value",
+      "query": "What are some affordable petroleum jelly products for dry skin?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-019",
+      "category": "skincare",
+      "intent": "product_discovery",
+      "query": "Can you recommend a fragrance-free body lotion for daily use?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    },
+    {
+      "id": "SKINCARE-020",
+      "category": "skincare",
+      "intent": "popularity",
+      "query": "What are some popular moisturizers for dry skin?",
+      "target_brand": "Vaseline",
+      "quality_rationale": "Natural, brand-neutral category discovery query that asks for options or recommendations without naming the target brand or testing a specific product feature."
+    }
+  ]
+}
+

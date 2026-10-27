@@ -273,7 +273,7 @@ def test_evaluator_empty_and_whitespace_response():
             brand_domain="linear.app"
         )
         assert res.brand_mentioned is False
-        assert res.recommendation_status == "not_mentioned"
+        assert res.recommendation_status == "unknown"
         assert res.citations == []
         assert res.competitor_mentions == []
 

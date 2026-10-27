@@ -213,8 +213,8 @@ async def test_honest_denominators_on_partial_failure(client: AsyncClient, profi
         brand_id=profiled_brand.id,
         prompt_run_id=p_run.id,
         profile_version=1,
-        text="What is Linear App?",
-        normalized_text="what is linear app",
+        text="What is the best project management tool for engineering teams?",
+        normalized_text="what is the best project management tool for engineering teams",
         category="discovery",
         is_approved=True
     )

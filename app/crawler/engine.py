@@ -8,6 +8,7 @@ import re
 import time
 from typing import Dict, List, Set, Optional, Callable, Awaitable, Any
 from urllib.parse import urlparse, urljoin
+from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.crawler.security import (
     validate_and_resolve_url,
@@ -85,6 +86,21 @@ def extract_html_from_response(response) -> str:
     return ""
 
 
+class WebsiteVerificationResult(BaseModel):
+    url: str
+    status: str  # "reachable", "dns_failure", "timeout", "blocked", "not_found", "server_error", "ssrf_blocked", "invalid_url", "error"
+    http_status: Optional[int] = None
+    is_usable: bool = False
+    error_details: Optional[str] = None
+    title: Optional[str] = None
+    meta_description: Optional[str] = None
+    structured_data: List[Dict[str, Any]] = Field(default_factory=list)
+    headings: Dict[str, List[str]] = Field(default_factory=dict)
+    extracted_text: str = ""
+    classification: Optional[Dict[str, Any]] = None
+    final_url: Optional[str] = None
+
+
 class CrawlItem:
     def __init__(self, url: str, depth: int = 0, priority: int = 2):
         self.url = url
@@ -98,12 +114,14 @@ class ScraplingCrawler:
         base_url: str,
         page_limit: int = 25,
         max_depth: int = 3,
-        on_progress: Optional[Callable[[Dict[str, int]], Awaitable[None]]] = None
+        on_progress: Optional[Callable[[Dict[str, int]], Awaitable[None]]] = None,
+        homepage_only: bool = False
     ):
         self.base_url = normalize_url(base_url)
         self.base_domain = urlparse(self.base_url).hostname or ""
-        self.page_limit = min(page_limit, settings.HARD_MAX_PAGE_LIMIT)
-        self.max_depth = min(max_depth, settings.CRAWL_MAX_DEPTH)
+        self.homepage_only = homepage_only
+        self.page_limit = 1 if homepage_only else min(page_limit, settings.HARD_MAX_PAGE_LIMIT)
+        self.max_depth = 0 if homepage_only else min(max_depth, settings.CRAWL_MAX_DEPTH)
         self.on_progress = on_progress
 
         # State
@@ -183,7 +201,13 @@ class ScraplingCrawler:
         }
 
     async def run(self) -> List[Dict]:
-        """Execute the complete budget-bounded crawl run."""
+        """Execute the complete budget-bounded crawl run or homepage verification."""
+        if self.homepage_only:
+            logger.info(f"Starting homepage-only verification on {self.base_url}")
+            await self.verify_and_classify_homepage()
+            await self._notify_progress()
+            return self.crawled_pages
+
         logger.info(f"Starting Scrapling crawl on {self.base_url} (budget: {self.page_limit} pages, depth: {self.max_depth})")
 
         # 1. Fetch robots.txt
@@ -506,3 +530,344 @@ class ScraplingCrawler:
                 })
             except Exception:
                 pass
+
+    def _classify_minimal_homepage(
+        self,
+        title: Optional[str],
+        meta_description: Optional[str],
+        structured_data: List[Dict[str, Any]],
+        headings: Dict[str, List[str]],
+        text: str
+    ) -> Dict[str, Any]:
+        schema_app_cat = ""
+        schema_name = ""
+        schema_desc = ""
+        for s in structured_data:
+            if isinstance(s, dict):
+                schema_app_cat = s.get("applicationCategory") or schema_app_cat
+                schema_name = s.get("name") or schema_name
+                schema_desc = s.get("description") or schema_desc
+
+        h1s = " ".join(headings.get("h1", []))
+        h2s = " ".join(headings.get("h2", []))
+        corpus = f"{title or ''} {meta_description or ''} {schema_name} {schema_app_cat} {schema_desc} {h1s} {h2s} {text[:2000]}".lower()
+
+        # Check CRM / Sales
+        crm_pats = ["crm", "sales pipeline", "lead management", "prospecting", "outbound sales", "sales automation", "revops", "lead generation", "deal tracking", "close more deals", "sales intelligence"]
+        if any(p in corpus for p in crm_pats):
+            return {
+                "primary_category": "CRM & Sales Intelligence",
+                "domain_archetype": "crm_sales",
+                "confidence": 0.95 if schema_app_cat else 0.85,
+                "explanation": "Identified CRM, lead prospecting, and sales pipeline evidence from homepage metadata and headings."
+            }
+
+        # Check Developer Tools
+        dev_pats = ["developer tools", "api gateway", "cloud infrastructure", "model routing", "sdk toolkit", "backend engineering", "kubernetes", "devops", "rest api", "graphql api"]
+        if any(p in corpus for p in dev_pats):
+            return {
+                "primary_category": "Developer Tools & APIs",
+                "domain_archetype": "developer_tools",
+                "confidence": 0.9 if schema_app_cat else 0.8,
+                "explanation": "Identified developer API and infrastructure keywords from homepage metadata."
+            }
+
+        # Check Marketing Automation
+        mkt_pats = ["marketing automation", "email marketing", "email campaigns", "customer segmentation", "newsletter analytics", "omnichannel marketing"]
+        if any(p in corpus for p in mkt_pats):
+            return {
+                "primary_category": "Marketing Automation",
+                "domain_archetype": "marketing_automation",
+                "confidence": 0.85,
+                "explanation": "Identified marketing automation and campaign management signals."
+            }
+
+        # Check Fintech & Payments
+        fintech_pats = ["payment gateway", "automated billing", "invoice reconciliation", "fintech", "banking platform", "merchant processing", "subscription billing", "financial services"]
+        if any(p in corpus for p in fintech_pats):
+            return {
+                "primary_category": "Fintech & Payments",
+                "domain_archetype": "fintech",
+                "confidence": 0.85,
+                "explanation": "Identified financial and billing platform signals."
+            }
+
+        # Check Healthcare Tech
+        health_pats = ["hipaa", "ehr", "patient scheduling", "clinical practice", "healthcare technology", "medical practice", "telehealth", "health records"]
+        if any(p in corpus for p in health_pats):
+            return {
+                "primary_category": "Healthcare Technology",
+                "domain_archetype": "healthcare_tech",
+                "confidence": 0.85,
+                "explanation": "Identified healthcare practice and clinical management signals."
+            }
+
+        # Check Sporting Goods / Retail / Footwear
+        sport_pats = ["running shoes", "footwear", "sneakers", "athletic apparel", "sports equipment", "sportswear", "sporting goods"]
+        if any(p in corpus for p in sport_pats):
+            return {
+                "primary_category": "Sporting Goods",
+                "domain_archetype": "sportswear_sporting_goods",
+                "confidence": 0.9,
+                "explanation": "Identified footwear and athletic apparel signals."
+            }
+
+        # Check E-Commerce
+        ecom_pats = ["ecommerce", "online store", "shopping cart", "retail store", "shop online"]
+        if any(p in corpus for p in ecom_pats):
+            return {
+                "primary_category": "E-Commerce & Retail",
+                "domain_archetype": "ecommerce_retail",
+                "confidence": 0.8,
+                "explanation": "Identified e-commerce store catalog signals."
+            }
+
+        # Check Professional Services
+        service_pats = ["consulting firm", "advisory services", "management consulting", "professional services", "legal services"]
+        if any(p in corpus for p in service_pats):
+            return {
+                "primary_category": "Professional Services",
+                "domain_archetype": "professional_services",
+                "confidence": 0.8,
+                "explanation": "Identified client advisory and consulting services signals."
+            }
+
+        if any(p in corpus for p in ["software", "platform", "saas", "application"]):
+            return {
+                "primary_category": "General Business Software",
+                "domain_archetype": "general_business_software",
+                "confidence": 0.6,
+                "explanation": "Generic software signals detected without a dominant specialized vertical."
+            }
+
+        return {
+            "primary_category": "Unclassified / Uncertain",
+            "domain_archetype": "uncertain_category",
+            "confidence": 0.3,
+            "explanation": "Insufficient or ambiguous signals on homepage to classify vertical."
+        }
+
+    async def verify_and_classify_homepage(self) -> WebsiteVerificationResult:
+        """
+        Engine 1 Scrapling Scope Reduction:
+        Verifies whether a submitted website is reachable and extracts minimal homepage
+        classification signals (Title, Meta Description, Schema.org, Top Headings, Bounded Text).
+        Does NOT crawl subpages, sitemaps, or blogs.
+        """
+        # 1. URL and SSRF validation
+        try:
+            norm_target, resolved_ip, hostname = validate_and_resolve_url(self.base_url)
+        except SecurityValidationError as se:
+            err_msg = str(se)
+            if "dns" in err_msg.lower() or "resolve" in err_msg.lower():
+                status = "dns_failure"
+            elif any(k in err_msg.lower() for k in ("ssrf", "private", "loopback", "reserved", "prohibited")):
+                status = "ssrf_blocked"
+            else:
+                status = "dns_failure" if "failed" in err_msg.lower() else "invalid_url"
+            self.errors.append(err_msg)
+            return WebsiteVerificationResult(
+                url=self.base_url,
+                status=status,
+                http_status=None,
+                is_usable=False,
+                error_details=err_msg
+            )
+        except Exception as e:
+            err_msg = str(e)
+            status = "dns_failure" if "dns" in err_msg.lower() else "invalid_url"
+            return WebsiteVerificationResult(
+                url=self.base_url,
+                status=status,
+                http_status=None,
+                is_usable=False,
+                error_details=err_msg
+            )
+
+        # 2. Hop-by-hop fetch with redirect loop and scope validation
+        current_url = norm_target
+        redirect_count = 0
+        max_redirects = 5
+        visited_redirect_chain = {current_url}
+        final_response = None
+
+        while True:
+            try:
+                norm_curr, _, _ = validate_and_resolve_url(current_url)
+                if not is_same_domain_or_subdomain(norm_curr, self.base_domain):
+                    return WebsiteVerificationResult(
+                        url=self.base_url,
+                        status="blocked",
+                        http_status=None,
+                        is_usable=False,
+                        error_details=f"Redirect out of domain scope: {norm_curr}"
+                    )
+
+                response = await safe_fetch_scrapling(
+                    norm_curr,
+                    timeout=settings.REQUEST_TIMEOUT_SECONDS,
+                    headers={"User-Agent": settings.USER_AGENT}
+                )
+            except (TimeoutError, asyncio.TimeoutError) as te:
+                return WebsiteVerificationResult(
+                    url=self.base_url,
+                    status="timeout",
+                    http_status=None,
+                    is_usable=False,
+                    error_details=f"Request timed out after {settings.REQUEST_TIMEOUT_SECONDS}s: {te}"
+                )
+            except SecurityValidationError as se:
+                err_msg = str(se)
+                status = "dns_failure" if ("dns" in err_msg.lower() or "resolve" in err_msg.lower()) else "ssrf_blocked"
+                return WebsiteVerificationResult(
+                    url=self.base_url,
+                    status=status,
+                    http_status=None,
+                    is_usable=False,
+                    error_details=err_msg
+                )
+            except Exception as e:
+                err_msg = str(e)
+                if "timed out" in err_msg.lower() or "timeout" in err_msg.lower():
+                    return WebsiteVerificationResult(
+                        url=self.base_url,
+                        status="timeout",
+                        http_status=None,
+                        is_usable=False,
+                        error_details=err_msg
+                    )
+                if "dns" in err_msg.lower() or "resolve" in err_msg.lower():
+                    return WebsiteVerificationResult(
+                        url=self.base_url,
+                        status="dns_failure",
+                        http_status=None,
+                        is_usable=False,
+                        error_details=err_msg
+                    )
+                return WebsiteVerificationResult(
+                    url=self.base_url,
+                    status="error",
+                    http_status=None,
+                    is_usable=False,
+                    error_details=err_msg
+                )
+
+            if response.status in (301, 302, 303, 307, 308):
+                redirect_count += 1
+                if redirect_count > max_redirects:
+                    return WebsiteVerificationResult(
+                        url=self.base_url,
+                        status="error",
+                        http_status=response.status,
+                        is_usable=False,
+                        error_details=f"Exceeded max redirects ({max_redirects})"
+                    )
+                location = response.headers.get("location") or response.headers.get("Location")
+                if not location:
+                    return WebsiteVerificationResult(
+                        url=self.base_url,
+                        status="error",
+                        http_status=response.status,
+                        is_usable=False,
+                        error_details="Redirect without Location header"
+                    )
+                next_url = normalize_url(urljoin(current_url, location))
+                if next_url in visited_redirect_chain:
+                    return WebsiteVerificationResult(
+                        url=self.base_url,
+                        status="error",
+                        http_status=response.status,
+                        is_usable=False,
+                        error_details=f"Redirect loop detected: {next_url}"
+                    )
+                visited_redirect_chain.add(next_url)
+                current_url = next_url
+                continue
+
+            final_response = response
+            break
+
+        status_code = final_response.status
+        final_url = current_url
+
+        if status_code in (401, 403, 429):
+            return WebsiteVerificationResult(
+                url=self.base_url,
+                status="blocked",
+                http_status=status_code,
+                is_usable=False,
+                error_details=f"HTTP {status_code} Access Restricted / Bot Protection",
+                final_url=final_url
+            )
+        elif status_code == 404:
+            return WebsiteVerificationResult(
+                url=self.base_url,
+                status="not_found",
+                http_status=status_code,
+                is_usable=False,
+                error_details="HTTP 404 Not Found",
+                final_url=final_url
+            )
+        elif status_code >= 500:
+            return WebsiteVerificationResult(
+                url=self.base_url,
+                status="server_error",
+                http_status=status_code,
+                is_usable=False,
+                error_details=f"HTTP {status_code} Server Error",
+                final_url=final_url
+            )
+        elif status_code >= 400:
+            return WebsiteVerificationResult(
+                url=self.base_url,
+                status="error",
+                http_status=status_code,
+                is_usable=False,
+                error_details=f"HTTP {status_code} Error",
+                final_url=final_url
+            )
+
+        # 3. 2xx Success: Extract minimal signals bounded
+        html = extract_html_from_response(final_response)
+        page_dict = extract_page_content(
+            html=html,
+            requested_url=self.base_url,
+            final_url=final_url,
+            http_status=status_code,
+            base_domain=self.base_domain,
+            used_js=False
+        )
+
+        title = page_dict.get("title")
+        meta_description = page_dict.get("meta_description")
+        structured_data = page_dict.get("structured_data") or []
+        headings = page_dict.get("headings") or {}
+        extracted_text = (page_dict.get("extracted_text") or "")[:5000]
+
+        classification = self._classify_minimal_homepage(
+            title=title,
+            meta_description=meta_description,
+            structured_data=structured_data,
+            headings=headings,
+            text=extracted_text
+        )
+
+        self.pages_discovered = 1
+        self.pages_attempted = 1
+        self.pages_succeeded = 1
+        self.visited_urls.add(self.base_url)
+        self.crawled_pages = [page_dict]
+
+        return WebsiteVerificationResult(
+            url=self.base_url,
+            status="reachable",
+            http_status=status_code,
+            is_usable=True,
+            title=title,
+            meta_description=meta_description,
+            structured_data=structured_data,
+            headings=headings,
+            extracted_text=extracted_text,
+            classification=classification,
+            final_url=final_url
+        )
